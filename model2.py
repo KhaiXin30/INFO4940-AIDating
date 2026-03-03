@@ -153,6 +153,7 @@ STAGE1_SYSTEM = (
     "Never overwhelm the user. Ask follow-up questions if needed. Never repeat a question they've already answered. "
     "Cover BOTH personality traits AND physical/lifestyle preferences — don't skip either. "
     "Never show a bullet point summary mid-conversation. "
+    "Never suggest examples or options when asking a question — let the user answer in their own words without prompting. "
     "After 2 responses on the same topic, naturally move to the next topic. "
     "Signal topic changes conversationally, e.g. 'That makes sense — shifting gears a bit...' "
     "You must eventually populate ALL of these fields:\n"
@@ -300,6 +301,7 @@ STAGE2_SYSTEM = (
     "You are a perceptive relationship coach reviewing a user's partner preferences for tensions, "
     "contradictions, or missing nuance. Your job is to ask ONE short clarifying question at a time "
     "to resolve any issues you find. Do not ask about things already clearly stated. "
+    "Try to ask AT LEAST TWO clarifying questions if possible."
     "When everything is resolved, write a warm one-sentence transition like: "
     "'Great — I have everything I need. Let me put together a profile for you!' "
     "and then immediately output only a raw JSON block preceded by 'PREFERENCES_UPDATED:' "
@@ -325,6 +327,8 @@ def stage2_tension(preference_json):
 
     retry_count = 0
     max_retries = 3
+    questions_asked = 0
+    min_questions = 2
 
     while True:
         ai_response = call_llm(messages, max_tokens=350)
@@ -335,7 +339,19 @@ def stage2_tension(preference_json):
 
         # ── Check for final updated preferences ──
         if "PREFERENCES_UPDATED:" in ai_response:
-            # Print only the conversational part (before the JSON signal)
+
+            if questions_asked < min_questions:
+                messages.append({"role": "assistant", "content": ai_response})
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"You have only asked {questions_asked} clarifying question(s). "
+                        f"You must ask at least {min_questions} before finishing. "
+                        "Ask one more natural clarifying question now — do not output JSON yet."
+                    )
+                })
+                continue
+
             human_part = ai_response.split("PREFERENCES_UPDATED:")[0].strip()
             if human_part:
                 print(f"\nAI: {human_part}\n")
@@ -347,7 +363,7 @@ def stage2_tension(preference_json):
             else:
                 retry_count += 1
                 if retry_count > max_retries:
-                    return current  # fall back to what we had
+                    return current
                 messages.append({"role": "assistant", "content": ai_response})
                 messages.append({
                     "role": "system",
@@ -359,13 +375,13 @@ def stage2_tension(preference_json):
                 continue
 
         # ── Normal clarification question ──
-        # Strip any accidental JSON leakage
         clean_response = ai_response
         if "{" in ai_response:
             clean_response = ai_response[:ai_response.find("{")].strip()
 
         if clean_response:
             print(f"\nAI: {clean_response}\n")
+            questions_asked += 1
 
         messages.append({"role": "assistant", "content": ai_response})
 
@@ -405,8 +421,9 @@ SECTIONS = [
     ("typical day", "Here's what their typical day looks like:"),
     ("conflict style", "Here's how they handle conflict:"),
     ("backstory", "Here's their backstory:"),
-    ("why this profile fits you", "Here's why I think this fits you:"),
 ]
+
+FINAL_SECTION = ("why this profile fits you", "Here's why I think this fits you:")
 
 def stage3_profile(preference_json):
     messages = [{"role": "system", "content": STAGE3_SYSTEM}]
@@ -429,18 +446,18 @@ def stage3_profile(preference_json):
 
     for section_key, section_intro in SECTIONS:
 
-        # Ask model for the section
         messages.append({
             "role": "user",
             "content": (
                 f"Generate only the '{section_key}' section based on these preferences: "
                 f"{json.dumps(preference_json)}. "
                 f"Start your response with: '{section_intro}' "
-                f"After the section, ask the user one short, natural question about whether they'd like to change anything in this section specifically."
+                f"After the section prose, add exactly '---' on a new line, "
+                f"then ask the user one short, natural question about whether they'd like to change anything in this section specifically."
             )
         })
 
-        ai_response = call_llm(messages, max_tokens=250)
+        ai_response = call_llm(messages, max_tokens=400)
         if not ai_response:
             continue
 
@@ -456,17 +473,33 @@ def stage3_profile(preference_json):
 
             messages.append({
                 "role": "user",
-                "content": f"{feedback}. Regenerate only the '{section_key}' section with that change."
+                "content": f"{feedback}. Regenerate only the '{section_key}' section with that change. Again, after the section prose, add exactly '---' on a new line, then ask if they'd like to change anything."
             })
 
-            ai_response = call_llm(messages, max_tokens=250)
+            ai_response = call_llm(messages, max_tokens=400)
             if not ai_response:
                 break
 
             messages.append({"role": "assistant", "content": ai_response})
             print(f"\nAI: {ai_response}\n")
 
-        profile_parts[section_key] = ai_response
+        prose_only = ai_response.split("---")[0].strip()
+        profile_parts[section_key] = prose_only
+
+    # Generate the final "why this fits you" section without an edit loop
+    final_key, final_intro = FINAL_SECTION
+    messages.append({
+        "role": "user",
+        "content": (
+            f"Generate only the '{final_key}' section based on these preferences: "
+            f"{json.dumps(preference_json)}. "
+            f"Start your response with: '{final_intro}'"
+        )
+    })
+
+    final_section = call_llm(messages, max_tokens=400)
+    if final_section:
+        profile_parts[final_key] = final_section.strip()
 
     # Assemble full profile
     full_profile = "\n\n".join(profile_parts.values())
@@ -498,6 +531,19 @@ STAGE4_SYSTEM = (
 )
 
 
+STAGE4_SYSTEM = (
+    "You are collaboratively refining a fictional partner profile with the user. "
+    "They will give you feedback and you will update the profile accordingly. "
+    "Always reprint the full updated profile after each change, clearly marking what changed. "
+    "Keep the same warm, prose-based format. "
+    "Do NOT print the JSON of the profile, only the text description. "
+    "After reprinting the profile, you MUST suggest 2-3 specific sections the user could refine. "
+    "For example: 'We could push his personality further, adjust his backstory, or change his typical day — what feels most important?' "
+    "Never end your response without offering specific options — never wait passively for feedback. "
+    "When the user is happy, end with a short warm closing message."
+)
+
+
 def stage4_refinement(preference_json, profile_text):
     if not profile_text:
         print("\nAI: No profile to refine — let's go back and generate one first.\n")
@@ -513,8 +559,6 @@ def stage4_refinement(preference_json, profile_text):
             "content": (
                 "Here is the current partner profile:\n\n"
                 + profile_text
-                + "\n\nMy original preferences for reference:\n"
-                + json.dumps(preference_json, indent=2)
             )
         },
         {
@@ -532,8 +576,15 @@ def stage4_refinement(preference_json, profile_text):
                   "Good luck — you deserve someone great. 💛\n")
             break
 
-        messages.append({"role": "user", "content": feedback})
-        ai_response = call_llm(messages, max_tokens=1500)
+        messages.append({
+            "role": "user",
+            "content": (
+                f"{feedback}\n\n"
+                "After updating the profile, suggest 2-3 specific sections the user could refine next."
+            )
+        })
+
+        ai_response = call_llm(messages, max_tokens=3000)
 
         if not ai_response:
             print("\nAI: (I had a hiccup — could you repeat that?)\n")
@@ -544,7 +595,6 @@ def stage4_refinement(preference_json, profile_text):
         print(f"{'─' * 60}\n")
 
         messages.append({"role": "assistant", "content": ai_response})
-
 
 # ---------------------------------------------------------------
 # MAIN
