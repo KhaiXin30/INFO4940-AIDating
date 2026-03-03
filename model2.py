@@ -412,8 +412,8 @@ def stage3_profile(preference_json):
     messages = [{"role": "system", "content": STAGE3_SYSTEM}]
     profile_parts = {}
 
-    print("\nAI: Before I build anything — do you have any ideas about this person? "
-          "A name, a job, a vibe? Or would you like me to surprise you?\n")
+    print("\nAI: Before I build anything — do you have any ideas about this person?")
+    print("A name, a job, a vibe? Or would you like me to surprise you?\n")
 
     user_ideas = input("You: ").strip()
     if user_ideas:
@@ -423,9 +423,13 @@ def stage3_profile(preference_json):
         })
 
     print("\nWe'll build this profile together, section by section.")
-    print("At any point, give feedback to shape the section or type 'done' to move on.\n")
+    print("After each section:")
+    print("- Tell me what to change")
+    print("- Or type 'done' to move on\n")
 
     for section_key, section_intro in SECTIONS:
+
+        # Ask model for the section
         messages.append({
             "role": "user",
             "content": (
@@ -441,28 +445,32 @@ def stage3_profile(preference_json):
             continue
 
         messages.append({"role": "assistant", "content": ai_response})
-        print(f"AI: {ai_response}\n")
+        print(f"\nAI: {ai_response}\n")
 
-        feedback = input("You: ").strip()
+        # === EDIT LOOP ===
+        while True:
+            feedback = input("You (type 'done' if no changes): ").strip()
 
-        if feedback and feedback != "":
+            if not feedback or feedback.lower() == "done":
+                break
+
             messages.append({
                 "role": "user",
-                "content": f"{feedback}. Regenerate only this section with that change."
+                "content": f"{feedback}. Regenerate only the '{section_key}' section with that change."
             })
+
             ai_response = call_llm(messages, max_tokens=250)
-            if ai_response:
-                messages.append({"role": "assistant", "content": ai_response})
-                print(f"AI: {ai_response}\n")
-                feedback2 = input("You: ").strip()
-                if feedback2:
-                    messages.append({"role": "user", "content": feedback2})
+            if not ai_response:
+                break
+
+            messages.append({"role": "assistant", "content": ai_response})
+            print(f"\nAI: {ai_response}\n")
 
         profile_parts[section_key] = ai_response
 
-
-    # Assemble and display full profile
+    # Assemble full profile
     full_profile = "\n\n".join(profile_parts.values())
+
     print(f"\n{'─' * 60}")
     print("YOUR IDEAL PARTNER PROFILE")
     print(f"{'─' * 60}\n")
