@@ -19,7 +19,7 @@ from llama_cpp import Llama
 # -------------------------------
 # CONFIG
 # -------------------------------
-MODEL_PATH = "qwen2-7b-instruct-q4_0.gguf"
+MODEL_PATH = "llama-3.1-8b.gguf"
 
 print("Starting up… this may take a moment.")
 llm = Llama(
@@ -147,46 +147,113 @@ def all_fields_populated(prefs):
 # the user before handing off to Stage 2.
 # JSON is NEVER shown to the user.
 # ---------------------------------------------------------------
+# STAGE1_SYSTEM = (
+#     "You are a warm, perceptive relationship coach helping the user discover what they truly want in a long-term partner. "
+#     "Your job is to gather information through friendly, natural conversation — one question at a time. "
+#     "Be a good active listener and encourage users to reveal more information, details and not just surface level information by asking follow up questions."
+#     "You may ask relevant follow up questions based on what the users provide and not just move to the next question immediately."
+#     "Reply as if you are the user's friend who cares about the users, and not with intention to gather information only."
+#     "Never overwhelm the user. Ask follow-up questions if needed. Never repeat a question they've already answered. "
+#     "Cover BOTH personality traits AND physical/lifestyle preferences — don't skip either. "
+#     "Never show a bullet point summary mid-conversation. "
+#     "Never suggest examples or options when asking a question — let the user answer in their own words without prompting. "
+#     # "After 2 responses on the same topic, naturally move to the next topic. "
+#     "Signal topic changes conversationally, like a human. "
+#     "You must eventually populate ALL of these fields:\n"
+#     "  1. gender              — preferred gender of partner: male, female, or unspecified\n"
+#     "  2. age_range           — preferred age range of a partner (e.g. '25–35')\n"
+#     "  3. appearance_preferences — physical traits that matter to them (can include 'doesn't matter')\n"
+#     "  4. lifestyle_habits    — preferences on smoking, drinking, fitness, diet, etc.\n\n"
+#     "  5. core_values         — key character traits or life values they want (e.g. ambition, kindness, honesty)\n"
+#     "  6. emotional_needs     — how they need to feel in the relationship (e.g. secure, heard, calm)\n"
+#     "  7. deal_breakers       — absolute hard no's\n"
+#     "  8. attachment_style    — one of: secure, anxious, avoidant, disorganised\n"
+#     "  9. love_languages      — words of affirmation, quality time, acts of service, physical touch, gifts\n"
+#     "When ALL fields have concrete answers, output a brief, warm summary of what you've learned "
+#     "(in plain conversational English — NO JSON), then ask the user: "
+#     "'Does this feel right, or is there anything you'd like to adjust before we move on?' "
+#     "Wait for their confirmation. Once they confirm (or make small adjustments), "
+#     "output ONLY a raw JSON block (no surrounding text) with this exact structure:\n"
+#     "PREFERENCES_FINAL: { "
+#     "\"core_values\": [], \"emotional_needs\": [], \"deal_breakers\": [], "
+#     "\"attachment_style\": \"\", \"love_languages\": [], \"gender\": \"\", "
+#     "\"age_range\": \"\", \"appearance_preferences\": [], \"lifestyle_habits\": [] "
+#     "}\n\n"
+#     "Rules:\n"
+#     "- Do NOT output JSON until all 9 fields are filled AND the user has confirmed.\n"
+#     "- If they adjust something in their confirmation reply, update the JSON accordingly.\n"
+#     # "- After at most 12 questions without completing all fields, do your best with available data, "
+#     "- Summarise, and ask for confirmation. Remember to ask thoughtful follow-up questions and emotionally resonate with the user when possible.\n"
+#     "- Keep the tone warm, curious, and non-judgmental."
+#     "- Add jokes and humor to keep the conversation light-hearted"
+# )
+
 STAGE1_SYSTEM = (
-    "You are a warm, perceptive relationship coach helping the user discover what they truly want in a long-term partner. "
-    "Your job is to gather information through friendly, natural conversation — one question at a time. "
-    "Be a good active listener and encourage users to reveal more information, details and not just surface level information by asking follow up questions."
-    "You may ask relevant follow up questions based on what the users provide and not just move to the next question immediately."
-    "Reply as if you are the user's friend who cares about the users, and not with intention to gather information only."
-    "Never overwhelm the user. Ask follow-up questions if needed. Never repeat a question they've already answered. "
-    "Cover BOTH personality traits AND physical/lifestyle preferences — don't skip either. "
-    "Never show a bullet point summary mid-conversation. "
-    "Never suggest examples or options when asking a question — let the user answer in their own words without prompting. "
-    # "After 2 responses on the same topic, naturally move to the next topic. "
-    "Signal topic changes conversationally, like a human. "
-    "You must eventually populate ALL of these fields:\n"
-    "  1. gender              — preferred gender of partner: male, female, or unspecified\n"
-    "  2. age_range           — preferred age range of a partner (e.g. '25–35')\n"
-    "  3. appearance_preferences — physical traits that matter to them (can include 'doesn't matter')\n"
-    "  4. lifestyle_habits    — preferences on smoking, drinking, fitness, diet, etc.\n\n"
-    "  5. core_values         — key character traits or life values they want (e.g. ambition, kindness, honesty)\n"
-    "  6. emotional_needs     — how they need to feel in the relationship (e.g. secure, heard, calm)\n"
-    "  7. deal_breakers       — absolute hard no's\n"
-    "  8. attachment_style    — one of: secure, anxious, avoidant, disorganised\n"
-    "  9. love_languages      — words of affirmation, quality time, acts of service, physical touch, gifts\n"
-    "When ALL fields have concrete answers, output a brief, warm summary of what you've learned "
-    "(in plain conversational English — NO JSON), then ask the user: "
-    "'Does this feel right, or is there anything you'd like to adjust before we move on?' "
-    "Wait for their confirmation. Once they confirm (or make small adjustments), "
-    "output ONLY a raw JSON block (no surrounding text) with this exact structure:\n"
+    "You are a warm, perceptive relationship coach having a real conversation — not filling out a form. "
+    "Your single most important job is to make the user feel genuinely heard and understood.\n\n"
+
+    "THE MOST IMPORTANT RULE — READ THIS FIRST:\n"
+    "After EVERY user response, before doing anything else, ask yourself two questions:\n"
+    "  1. Do I understand WHY they want this?\n"
+    "  2. Do I know what this means to them personally?\n"
+    "If the answer to either is no — ask a follow-up. Do not move to a new topic.\n"
+    "If their answer is 10 words or fewer — ask a follow-up. No exceptions.\n"
+    "A follow-up should feel like a natural reaction to what they just said, not a generic question.\n"
+    "Never use the same follow-up phrasing twice. Never ask 'why is that important to you?' more than once.\n\n"
+
+    "CONVERSATION RULES:\n"
+    "1. Ask ONE question per turn. Never ask two questions at once.\n"
+    "2. Always acknowledge what the user said before asking anything new — one warm phrase is enough.\n"
+    "3. Never summarise or repeat back what the user just said.\n"
+    "4. Never suggest examples or options — let the user answer in their own words.\n"
+    "5. Never show bullet lists, summaries, or JSON mid-conversation.\n"
+    "6. Add light humour occasionally to keep the tone easy.\n"
+    "7. Spend a minimum of 2 turns on each topic before moving on.\n\n"
+
+    "TOPIC ORDER:\n"
+    "Always begin by asking about gender and age range first — this is your opening question.\n"
+    "Work through the remaining topics in order. Do not skip ahead.\n"
+    "  A) Gender and age range\n"
+    "  B) Physical appearance and lifestyle (fitness, smoking, drinking, diet)\n"
+    "  C) Core values and character\n"
+    "  D) Emotional needs\n"
+    "  E) Deal-breakers\n"
+    "  F) Attachment style — infer from how they describe past relationships, never ask directly\n"
+    "  G) Love languages — infer where possible, ask gently if not clear\n\n"
+
+    "PACING RULES:\n"
+    "- Spend a MAXIMUM of 3 turns on any single topic, then move on regardless.\n"
+    "- If you already understand both WHY and WHAT IT MEANS TO THEM, move on — do not fish for more.\n"
+    "- Never ask a follow-up that explores the same angle as a previous question on the same topic.\n\n"
+    "- Never signal that the conversation is wrapping up (e.g. 'I think we have a good sense') until you are genuinely ready to output the final JSON.\n"
+
+    "WHAT COUNTS AS A COMPLETE ANSWER:\n"
+    "An answer is only complete when it has both:\n"
+    "  - Specific detail (not just a label like 'kind' or 'funny')\n"
+    "  - Personal context (why it matters, what it means to them, or how it shows up)\n"
+    "Until both are present, ask a follow-up.\n\n"
+
+    "FIELDS TO POPULATE (internally — never show this list to the user):\n"
+    "  1. gender, 2. age_range, 3. appearance_preferences, 4. lifestyle_habits,\n"
+    "  5. core_values, 6. emotional_needs, 7. deal_breakers,\n"
+    "  8. attachment_style, 9. love_languages\n\n"
+
+    "WRAPPING UP — only when ALL 9 fields have specific, detailed answers:\n"
+    "  Step 1 — Silent self-check: every field is concrete and specific, no contradictions.\n"
+    "  Step 2 — If anything is vague, ask one more clarifying question instead of finishing.\n"
+    "  Step 3 — Once satisfied, output ONLY this raw JSON with no surrounding text:\n"
     "PREFERENCES_FINAL: { "
     "\"core_values\": [], \"emotional_needs\": [], \"deal_breakers\": [], "
     "\"attachment_style\": \"\", \"love_languages\": [], \"gender\": \"\", "
     "\"age_range\": \"\", \"appearance_preferences\": [], \"lifestyle_habits\": [] "
     "}\n\n"
-    "Rules:\n"
-    "- Do NOT output JSON until all 9 fields are filled AND the user has confirmed.\n"
-    "- If they adjust something in their confirmation reply, update the JSON accordingly.\n"
-    # "- After at most 12 questions without completing all fields, do your best with available data, "
-    "summarise, and ask for confirmation.\n"
-    "- Keep the tone warm, curious, and non-judgmental."
-)
 
+    "HARD RULES:\n"
+    "- Do NOT output JSON until all 9 fields are filled.\n"
+    "- Never repeat a question already answered.\n"
+    "- Keep tone warm, curious, and non-judgmental throughout.\n"
+    "- If they adjust something, update the JSON accordingly."
+)
 
 def stage1_intake():
     messages = [
@@ -196,15 +263,14 @@ def stage1_intake():
 
     preference_json = None
     turn_count = 0
-    max_turns = 14          # generous limit before forced wrap-up
+    max_turns = 20
     force_wrap = False
     retry_count = 0
     max_retries = 3
 
     while True:
-        ai_response = call_llm(messages, max_tokens=350)
+        ai_response = call_llm(messages, max_tokens=700)
 
-        # Graceful failure if model returns nothing
         if not ai_response:
             print("\nAI: (I seem to have lost my train of thought — could you repeat that?)\n")
             user_input = input("You: ").strip()
@@ -212,7 +278,7 @@ def stage1_intake():
                 messages.append({"role": "user", "content": user_input})
             continue
 
-        # ── Check if AI has emitted the final JSON signal ──
+        # ── Final JSON signal — exit immediately, no confirmation needed ──
         if "PREFERENCES_FINAL:" in ai_response:
             raw_json_part = ai_response.split("PREFERENCES_FINAL:", 1)[1]
             parsed = safe_parse_json(raw_json_part)
@@ -220,64 +286,57 @@ def stage1_intake():
                 preference_json = normalize_preferences(parsed)
                 missing = missing_fields(preference_json)
                 if missing and not force_wrap:
-                    # Fields still empty — ask AI to fill them before finishing
                     messages.append({"role": "assistant", "content": ai_response})
                     messages.append({
                         "role": "system",
                         "content": (
                             f"The following fields are still empty: {', '.join(missing)}. "
-                            "Do NOT output the final JSON yet. "
-                            "Ask one natural question to fill one of those missing fields."
+                            "Do NOT output JSON yet. Ask one natural question to fill one missing field."
                         )
                     })
                     continue
-                # All good — exit Stage 1 silently
+                # Silent exit — go straight to profile generation
                 break
             else:
-                # JSON was malformed — ask AI to retry
                 retry_count += 1
                 if retry_count > max_retries:
-                    # Give up and use whatever we have (or defaults)
                     preference_json = normalize_preferences({})
                     break
                 messages.append({"role": "assistant", "content": ai_response})
                 messages.append({
                     "role": "system",
                     "content": (
-                        "Your JSON was malformed. Output ONLY the raw JSON block with no surrounding text, "
-                        "preceded by 'PREFERENCES_FINAL:'. Use strict JSON (double-quoted keys, no trailing commas)."
+                        "Your JSON was malformed. Output ONLY 'PREFERENCES_FINAL:' followed by "
+                        "a valid JSON block. No other text. Double-quoted keys, no trailing commas."
                     )
                 })
                 continue
 
-        # ── Normal conversational turn ──
-        # Show only the human-readable part (strip any accidental JSON fragments)
-        user_facing = ai_response
+        # ── Leaked JSON guard ──
         if "{" in ai_response and "core_values" in ai_response:
-            # AI leaked partial JSON — strip it, ask it to rephrase
             messages.append({"role": "assistant", "content": ai_response})
             messages.append({
                 "role": "system",
                 "content": (
-                    "Do not output any JSON yet — not all fields are filled and the user hasn't confirmed. "
-                    "Continue the conversation naturally and ask one more question."
+                    "Do not output any JSON yet — not all fields are complete. "
+                    "Continue the conversation and ask one more question."
                 )
             })
             continue
 
-        print(f"\nAI: {user_facing.strip()}\n")
+        # ── Normal turn ──
+        print(f"\nAI: {ai_response.strip()}\n")
         messages.append({"role": "assistant", "content": ai_response})
 
-        # ── Force wrap-up after max turns ──
         turn_count += 1
         if turn_count >= max_turns and not force_wrap:
             force_wrap = True
             messages.append({
                 "role": "system",
                 "content": (
-                    "You've asked enough questions. Summarise what you've learned in warm plain English, "
-                    "fill any missing fields with your best inference, "
-                    "then ask the user to confirm before outputting PREFERENCES_FINAL JSON."
+                    "You've gathered enough information. Do a final check for contradictions "
+                    "or vague fields, resolve in one question if needed, then output "
+                    "PREFERENCES_FINAL JSON immediately — no summary, no confirmation step."
                 )
             })
 
@@ -286,119 +345,222 @@ def stage1_intake():
             continue
         messages.append({"role": "user", "content": user_input})
 
-    # Fallback if we somehow exit without a valid object
     if preference_json is None:
         preference_json = normalize_preferences({})
 
     return preference_json
 
+# def stage1_intake():
+#     messages = [
+#         {"role": "system", "content": STAGE1_SYSTEM},
+#         {"role": "user", "content": "Hi, I'd like your help figuring out what I want in a partner."}
+#     ]
 
-# ---------------------------------------------------------------
-# STAGE 2 — TENSION DETECTION & CLARIFICATION
-# ---------------------------------------------------------------
-# Detects conflicts or gaps in preferences, asks targeted
-# questions to resolve them, and returns a refined preference
-# dict.  All JSON processing is hidden from the user.
-# ---------------------------------------------------------------
-STAGE2_SYSTEM = (
-    "You are a perceptive relationship coach reviewing a user's partner preferences for tensions, "
-    "contradictions, or missing nuance. Your job is to ask ONE short clarifying question at a time "
-    "to resolve any issues you find. Do not ask about things already clearly stated. "
-    "Try to ask AT LEAST TWO clarifying questions if possible."
-    "When everything is resolved, write a warm one-sentence transition like: "
-    "'Great — I have everything I need. Let me put together a profile for you!' "
-    "and then immediately output only a raw JSON block preceded by 'PREFERENCES_UPDATED:' "
-    "with the same 9-field schema as before (updated with any clarifications).\n\n"
-    "Always respond in plain English for your question/comment. "
-    "Only output JSON when truly done."
-)
+#     preference_json = None
+#     turn_count = 0
+#     max_turns = 14          # generous limit before forced wrap-up
+#     force_wrap = False
+#     retry_count = 0
+#     max_retries = 3
+
+#     while True:
+#         ai_response = call_llm(messages, max_tokens=350)
+
+#         # Graceful failure if model returns nothing
+#         if not ai_response:
+#             print("\nAI: (I seem to have lost my train of thought — could you repeat that?)\n")
+#             user_input = input("You: ").strip()
+#             if user_input:
+#                 messages.append({"role": "user", "content": user_input})
+#             continue
+
+#         # ── Check if AI has emitted the final JSON signal ──
+#         if "PREFERENCES_FINAL:" in ai_response:
+#             raw_json_part = ai_response.split("PREFERENCES_FINAL:", 1)[1]
+#             parsed = safe_parse_json(raw_json_part)
+#             if parsed:
+#                 preference_json = normalize_preferences(parsed)
+#                 missing = missing_fields(preference_json)
+#                 if missing and not force_wrap:
+#                     # Fields still empty — ask AI to fill them before finishing
+#                     messages.append({"role": "assistant", "content": ai_response})
+#                     messages.append({
+#                         "role": "system",
+#                         "content": (
+#                             f"The following fields are still empty: {', '.join(missing)}. "
+#                             "Do NOT output the final JSON yet. "
+#                             "Ask one natural question to fill one of those missing fields."
+#                         )
+#                     })
+#                     continue
+#                 # All good — exit Stage 1 silently
+#                 break
+#             else:
+#                 # JSON was malformed — ask AI to retry
+#                 retry_count += 1
+#                 if retry_count > max_retries:
+#                     # Give up and use whatever we have (or defaults)
+#                     preference_json = normalize_preferences({})
+#                     break
+#                 messages.append({"role": "assistant", "content": ai_response})
+#                 messages.append({
+#                     "role": "system",
+#                     "content": (
+#                         "Your JSON was malformed. Output ONLY the raw JSON block with no surrounding text, "
+#                         "preceded by 'PREFERENCES_FINAL:'. Use strict JSON (double-quoted keys, no trailing commas)."
+#                     )
+#                 })
+#                 continue
+
+#         # ── Normal conversational turn ──
+#         # Show only the human-readable part (strip any accidental JSON fragments)
+#         user_facing = ai_response
+#         if "{" in ai_response and "core_values" in ai_response:
+#             # AI leaked partial JSON — strip it, ask it to rephrase
+#             messages.append({"role": "assistant", "content": ai_response})
+#             messages.append({
+#                 "role": "system",
+#                 "content": (
+#                     "Do not output any JSON yet — not all fields are filled and the user hasn't confirmed. "
+#                     "Continue the conversation naturally and ask one more question."
+#                 )
+#             })
+#             continue
+
+#         print(f"\nAI: {user_facing.strip()}\n")
+#         messages.append({"role": "assistant", "content": ai_response})
+
+#         # ── Force wrap-up after max turns ──
+#         turn_count += 1
+#         if turn_count >= max_turns and not force_wrap:
+#             force_wrap = True
+#             messages.append({
+#                 "role": "system",
+#                 "content": (
+#                     "You've asked enough questions. Summarise what you've learned in warm plain English, "
+#                     "fill any missing fields with your best inference, "
+#                     "then ask the user to confirm before outputting PREFERENCES_FINAL JSON."
+#                 )
+#             })
+
+#         user_input = input("You: ").strip()
+#         if not user_input:
+#             continue
+#         messages.append({"role": "user", "content": user_input})
+
+#     # Fallback if we somehow exit without a valid object
+#     if preference_json is None:
+#         preference_json = normalize_preferences({})
+
+#     return preference_json
 
 
-def stage2_tension(preference_json):
-    current = normalize_preferences(preference_json)
+# # ---------------------------------------------------------------
+# # STAGE 2 — TENSION DETECTION & CLARIFICATION
+# # ---------------------------------------------------------------
+# # Detects conflicts or gaps in preferences, asks targeted
+# # questions to resolve them, and returns a refined preference
+# # dict.  All JSON processing is hidden from the user.
+# # ---------------------------------------------------------------
+# STAGE2_SYSTEM = (
+#     "You are a perceptive relationship coach reviewing a user's partner preferences for tensions, "
+#     "contradictions, or missing nuance. Your job is to ask ONE short clarifying question at a time "
+#     "to resolve any issues you find. Do not ask about things already clearly stated. "
+#     "Try to ask AT LEAST TWO clarifying questions if possible."
+#     "When everything is resolved, write a warm one-sentence transition like: "
+#     "'Great — I have everything I need. Let me put together a profile for you!' "
+#     "and then immediately output only a raw JSON block preceded by 'PREFERENCES_UPDATED:' "
+#     "with the same 9-field schema as before (updated with any clarifications).\n\n"
+#     "Always respond in plain English for your question/comment. "
+#     "Only output JSON when truly done."
+# )
 
-    messages = [
-        {"role": "system", "content": STAGE2_SYSTEM},
-        {
-            "role": "user",
-            "content": (
-                "Here are my current preferences. Please review them and ask any clarifying questions:\n"
-                + json.dumps(current, indent=2)
-            )
-        }
-    ]
 
-    retry_count = 0
-    max_retries = 3
-    questions_asked = 0
-    min_questions = 2
+# def stage2_tension(preference_json):
+#     current = normalize_preferences(preference_json)
 
-    while True:
-        ai_response = call_llm(messages, max_tokens=350)
+#     messages = [
+#         {"role": "system", "content": STAGE2_SYSTEM},
+#         {
+#             "role": "user",
+#             "content": (
+#                 "Here are my current preferences. Please review them and ask any clarifying questions:\n"
+#                 + json.dumps(current, indent=2)
+#             )
+#         }
+#     ]
 
-        if not ai_response:
-            print("\nAI: (Give me a moment to think…)\n")
-            continue
+#     retry_count = 0
+#     max_retries = 3
+#     questions_asked = 0
+#     min_questions = 2
 
-        # ── Check for final updated preferences ──
-        if "PREFERENCES_UPDATED:" in ai_response:
+#     while True:
+#         ai_response = call_llm(messages, max_tokens=350)
 
-            if questions_asked < min_questions:
-                messages.append({"role": "assistant", "content": ai_response})
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        f"You have only asked {questions_asked} clarifying question(s). "
-                        f"You must ask at least {min_questions} before finishing. "
-                        "Ask one more natural clarifying question now — do not output JSON yet."
-                    )
-                })
-                continue
+#         if not ai_response:
+#             print("\nAI: (Give me a moment to think…)\n")
+#             continue
 
-            human_part = ai_response.split("PREFERENCES_UPDATED:")[0].strip()
-            if human_part:
-                print(f"\nAI: {human_part}\n")
+#         # ── Check for final updated preferences ──
+#         if "PREFERENCES_UPDATED:" in ai_response:
 
-            raw_json_part = ai_response.split("PREFERENCES_UPDATED:", 1)[1]
-            parsed = safe_parse_json(raw_json_part)
-            if parsed:
-                return normalize_preferences(parsed)
-            else:
-                retry_count += 1
-                if retry_count > max_retries:
-                    return current
-                messages.append({"role": "assistant", "content": ai_response})
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "Your JSON was malformed. Output ONLY 'PREFERENCES_UPDATED:' followed by "
-                        "a valid JSON block. No other text."
-                    )
-                })
-                continue
+#             if questions_asked < min_questions:
+#                 messages.append({"role": "assistant", "content": ai_response})
+#                 messages.append({
+#                     "role": "system",
+#                     "content": (
+#                         f"You have only asked {questions_asked} clarifying question(s). "
+#                         f"You must ask at least {min_questions} before finishing. "
+#                         "Ask one more natural clarifying question now — do not output JSON yet."
+#                     )
+#                 })
+#                 continue
 
-        # ── Normal clarification question ──
-        clean_response = ai_response
-        if "{" in ai_response:
-            clean_response = ai_response[:ai_response.find("{")].strip()
+#             human_part = ai_response.split("PREFERENCES_UPDATED:")[0].strip()
+#             if human_part:
+#                 print(f"\nAI: {human_part}\n")
 
-        if clean_response:
-            print(f"\nAI: {clean_response}\n")
-            questions_asked += 1
+#             raw_json_part = ai_response.split("PREFERENCES_UPDATED:", 1)[1]
+#             parsed = safe_parse_json(raw_json_part)
+#             if parsed:
+#                 return normalize_preferences(parsed)
+#             else:
+#                 retry_count += 1
+#                 if retry_count > max_retries:
+#                     return current
+#                 messages.append({"role": "assistant", "content": ai_response})
+#                 messages.append({
+#                     "role": "system",
+#                     "content": (
+#                         "Your JSON was malformed. Output ONLY 'PREFERENCES_UPDATED:' followed by "
+#                         "a valid JSON block. No other text."
+#                     )
+#                 })
+#                 continue
 
-        messages.append({"role": "assistant", "content": ai_response})
+#         # ── Normal clarification question ──
+#         clean_response = ai_response
+#         if "{" in ai_response:
+#             clean_response = ai_response[:ai_response.find("{")].strip()
 
-        user_input = input("You: ").strip()
-        if not user_input:
-            continue
+#         if clean_response:
+#             print(f"\nAI: {clean_response}\n")
+#             questions_asked += 1
 
-        messages.append({
-            "role": "user",
-            "content": (
-                f"{user_input}\n\n"
-                f"(Current preferences for your reference: {json.dumps(current)})"
-            )
-        })
+#         messages.append({"role": "assistant", "content": ai_response})
+
+#         user_input = input("You: ").strip()
+#         if not user_input:
+#             continue
+
+#         messages.append({
+#             "role": "user",
+#             "content": (
+#                 f"{user_input}\n\n"
+#                 f"(Current preferences for your reference: {json.dumps(current)})"
+#             )
+#         })
 
 
 # ---------------------------------------------------------------
@@ -612,10 +774,12 @@ def run_prototype():
     user_preferences = stage1_intake()
 
     # Smooth transition message (no JSON, no stage labels)
-    print("\nAI: Perfect — I've noted everything. Let me check a couple of things before we move on…\n")
+    # print("\nAI: Perfect — I've noted everything. Let me check a couple of things before we move on…\n")
 
-    # Stage 2 — Tension detection & clarification
-    user_preferences = stage2_tension(user_preferences)
+    print("\nAI: Okay, I think I've got a good picture of you now. Give me a moment...\n")
+
+    # # Stage 2 — Tension detection & clarification
+    # user_preferences = stage2_tension(user_preferences)
 
     # Stage 3 — Profile generation
     profile_text = stage3_profile(user_preferences)
