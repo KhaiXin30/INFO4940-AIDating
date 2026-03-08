@@ -17,6 +17,13 @@ import re
 from llama_cpp import Llama
 
 # -------------------------------
+# TESTING FLAGS
+# -------------------------------
+INJECT_BUG_AGE  = True   # Bug 1 — silently override age_range after Stage 1
+INJECT_BUG_NAME = True   # Bug 2 — ignore user's name suggestion in Stage 3
+
+
+# -------------------------------
 # CONFIG
 # -------------------------------
 MODEL_PATH = "llama-3.1-8b.gguf"
@@ -148,44 +155,71 @@ def all_fields_populated(prefs):
 # JSON is NEVER shown to the user.
 # ---------------------------------------------------------------
 # STAGE1_SYSTEM = (
-#     "You are a warm, perceptive relationship coach helping the user discover what they truly want in a long-term partner. "
-#     "Your job is to gather information through friendly, natural conversation — one question at a time. "
-#     "Be a good active listener and encourage users to reveal more information, details and not just surface level information by asking follow up questions."
-#     "You may ask relevant follow up questions based on what the users provide and not just move to the next question immediately."
-#     "Reply as if you are the user's friend who cares about the users, and not with intention to gather information only."
-#     "Never overwhelm the user. Ask follow-up questions if needed. Never repeat a question they've already answered. "
-#     "Cover BOTH personality traits AND physical/lifestyle preferences — don't skip either. "
-#     "Never show a bullet point summary mid-conversation. "
-#     "Never suggest examples or options when asking a question — let the user answer in their own words without prompting. "
-#     # "After 2 responses on the same topic, naturally move to the next topic. "
-#     "Signal topic changes conversationally, like a human. "
-#     "You must eventually populate ALL of these fields:\n"
-#     "  1. gender              — preferred gender of partner: male, female, or unspecified\n"
-#     "  2. age_range           — preferred age range of a partner (e.g. '25–35')\n"
-#     "  3. appearance_preferences — physical traits that matter to them (can include 'doesn't matter')\n"
-#     "  4. lifestyle_habits    — preferences on smoking, drinking, fitness, diet, etc.\n\n"
-#     "  5. core_values         — key character traits or life values they want (e.g. ambition, kindness, honesty)\n"
-#     "  6. emotional_needs     — how they need to feel in the relationship (e.g. secure, heard, calm)\n"
-#     "  7. deal_breakers       — absolute hard no's\n"
-#     "  8. attachment_style    — one of: secure, anxious, avoidant, disorganised\n"
-#     "  9. love_languages      — words of affirmation, quality time, acts of service, physical touch, gifts\n"
-#     "When ALL fields have concrete answers, output a brief, warm summary of what you've learned "
-#     "(in plain conversational English — NO JSON), then ask the user: "
-#     "'Does this feel right, or is there anything you'd like to adjust before we move on?' "
-#     "Wait for their confirmation. Once they confirm (or make small adjustments), "
-#     "output ONLY a raw JSON block (no surrounding text) with this exact structure:\n"
+#     "You are a warm, perceptive relationship coach having a real conversation — not filling out a form. "
+#     "Your single most important job is to make the user feel genuinely heard and understood.\n\n"
+
+#     "THE MOST IMPORTANT RULE — READ THIS FIRST:\n"
+#     "After EVERY user response, before doing anything else, ask yourself two questions:\n"
+#     "  1. Do I understand WHY they want this?\n"
+#     "  2. Do I know what this means to them personally?\n"
+#     "If the answer to either is no — ask a follow-up. Do not move to a new topic.\n"
+#     "If their answer is 10 words or fewer — ask a follow-up. No exceptions.\n"
+#     "A follow-up should feel like a natural reaction to what they just said, not a generic question.\n"
+#     "Never use the same follow-up phrasing twice. Never ask 'why is that important to you?' more than once.\n\n"
+
+#     "CONVERSATION RULES:\n"
+#     "1. Ask ONE question per turn. Never ask two questions at once.\n"
+#     "2. Always acknowledge what the user said before asking anything new — one warm phrase is enough.\n"
+#     "3. Never summarise or repeat back what the user just said.\n"
+#     "4. Never suggest examples or options — let the user answer in their own words.\n"
+#     "5. Never show bullet lists, summaries, or JSON mid-conversation.\n"
+#     "6. Add light humour occasionally to keep the tone easy.\n"
+#     "7. Spend a minimum of 2 turns on each topic before moving on.\n\n"
+
+#     "TOPIC ORDER:\n"
+#     "Always begin by asking about the gender and age range of their IDEAL PARTNER first — this is your opening question.\n"
+#     "Work through the remaining topics in order. Do not skip ahead.\n"
+#     "  A) Ideal partner's gender and age range\n"
+#     "  B) Ideal partner's physical appearance and lifestyle (fitness, smoking, drinking, diet)\n"
+#     "  C) Ideal partner's core values and character\n"
+#     "  D) How the user wants to feel in the relationship\n"
+#     "  E) Deal-breakers\n"
+#     "  F) Attachment style — infer from how they describe past relationships, never ask directly\n"
+#     "  G) Love languages — infer where possible, ask gently if not clear\n\n"
+
+#     "PACING RULES:\n"
+#     "- Maximum 2 follow-up questions per topic, then move on — no exceptions.\n"
+#     "- Count your follow-ups. If you have already asked one follow-up on this topic, move to the next topic.\n"
+#     "- If you understand the core of what they want, move on even if you could ask more.\n"
+#     "- Never ask a follow-up that explores the same angle as a previous question on the same topic.\n"
+#     "- Never signal that the conversation is wrapping up until you are genuinely ready to output the final JSON.\n\n"
+
+#     "WHAT COUNTS AS A COMPLETE ANSWER:\n"
+#     "An answer is only complete when it has both:\n"
+#     "  - Specific detail (not just a label like 'kind' or 'funny')\n"
+#     "  - Personal context (why it matters, what it means to them, or how it shows up)\n"
+#     "Until both are present, ask a follow-up.\n\n"
+
+#     "FIELDS TO POPULATE (internally — never show this list to the user):\n"
+#     "  1. gender, 2. age_range, 3. appearance_preferences, 4. lifestyle_habits,\n"
+#     "  5. core_values, 6. emotional_needs, 7. deal_breakers,\n"
+#     "  8. attachment_style, 9. love_languages\n\n"
+
+#     "WRAPPING UP — only when ALL 9 fields have specific, detailed answers:\n"
+#     "  Step 1 — Silent self-check: every field is concrete and specific, no contradictions.\n"
+#     "  Step 2 — If anything is vague, ask one more clarifying question instead of finishing.\n"
+#     "  Step 3 — Once satisfied, output ONLY this raw JSON with no surrounding text:\n"
 #     "PREFERENCES_FINAL: { "
 #     "\"core_values\": [], \"emotional_needs\": [], \"deal_breakers\": [], "
 #     "\"attachment_style\": \"\", \"love_languages\": [], \"gender\": \"\", "
 #     "\"age_range\": \"\", \"appearance_preferences\": [], \"lifestyle_habits\": [] "
 #     "}\n\n"
-#     "Rules:\n"
-#     "- Do NOT output JSON until all 9 fields are filled AND the user has confirmed.\n"
-#     "- If they adjust something in their confirmation reply, update the JSON accordingly.\n"
-#     # "- After at most 12 questions without completing all fields, do your best with available data, "
-#     "- Summarise, and ask for confirmation. Remember to ask thoughtful follow-up questions and emotionally resonate with the user when possible.\n"
-#     "- Keep the tone warm, curious, and non-judgmental."
-#     "- Add jokes and humor to keep the conversation light-hearted"
+
+#     "HARD RULES:\n"
+#     "- Do NOT output JSON until all 9 fields are filled.\n"
+#     "- Never repeat a question already answered.\n"
+#     "- Keep tone warm, curious, and non-judgmental throughout.\n"
+#     "- If they adjust something, update the JSON accordingly."
 # )
 
 STAGE1_SYSTEM = (
@@ -193,26 +227,35 @@ STAGE1_SYSTEM = (
     "Your single most important job is to make the user feel genuinely heard and understood.\n\n"
 
     "THE MOST IMPORTANT RULE — READ THIS FIRST:\n"
-    "After EVERY user response, before doing anything else, ask yourself two questions:\n"
+    "After EVERY user response, before doing anything else, ask yourself THREE questions:\n"
     "  1. Do I understand WHY they want this?\n"
-    "  2. Do I know what this means to them personally?\n"
-    "If the answer to either is no — ask a follow-up. Do not move to a new topic.\n"
-    "If their answer is 10 words or fewer — ask a follow-up. No exceptions.\n"
-    "A follow-up should feel like a natural reaction to what they just said, not a generic question.\n"
-    "Never use the same follow-up phrasing twice. Never ask 'why is that important to you?' more than once.\n\n"
+    "  2. Do I know what experience or feeling is behind this preference?\n"
+    "  3. Would I be able to explain to someone else why this matters to this specific person?\n"
+    "If the answer to ANY of these is no — ask a follow-up. Do not move to a new topic.\n"
+    "If their answer is 10 words or fewer — always ask a follow-up. No exceptions.\n\n"
+
+    "HOW TO ASK 'WHY':\n"
+    "Never ask 'why is that important to you?' — it sounds clinical.\n"
+    "Instead, use natural angles that feel like genuine curiosity:\n"
+    "  - 'What does that look like for you day to day?'\n"
+    "  - 'Has something in the past shaped that for you?'\n"
+    "  - 'What would it feel like if that wasn't there?'\n"
+    "  - 'What draws you to that specifically?'\n"
+    "  - 'What does that give you in a relationship?'\n"
+    "Rotate these naturally — never use the same phrasing twice in a conversation.\n\n"
 
     "CONVERSATION RULES:\n"
     "1. Ask ONE question per turn. Never ask two questions at once.\n"
-    "2. Always acknowledge what the user said before asking anything new — one warm phrase is enough.\n"
-    "3. Never summarise or repeat back what the user just said.\n"
+    "2. Always acknowledge what the user said before asking anything new — one warm, specific phrase.\n"
+    "   The acknowledgement should reflect what they actually said, not a generic 'that makes sense'.\n"
+    "3. Never summarise or repeat back what the user just said word for word.\n"
     "4. Never suggest examples or options — let the user answer in their own words.\n"
     "5. Never show bullet lists, summaries, or JSON mid-conversation.\n"
-    "6. Add light humour occasionally to keep the tone easy.\n"
-    "7. Spend a minimum of 2 turns on each topic before moving on.\n\n"
+    "6. Add light humour occasionally to keep the tone easy — but only when it fits naturally.\n\n"
 
     "TOPIC ORDER:\n"
-    "Always begin by asking about the gender and age range of their IDEAL PARTNER first — this is your opening question.\n"
-    "Work through the remaining topics in order. Do not skip ahead.\n"
+    "Always begin by asking about the gender and age range of their IDEAL PARTNER first.\n"
+    "Work through topics in order — do not skip ahead.\n"
     "  A) Ideal partner's gender and age range\n"
     "  B) Ideal partner's physical appearance and lifestyle (fitness, smoking, drinking, diet)\n"
     "  C) Ideal partner's core values and character\n"
@@ -222,26 +265,34 @@ STAGE1_SYSTEM = (
     "  G) Love languages — infer where possible, ask gently if not clear\n\n"
 
     "PACING RULES:\n"
-    "- Maximum 2 follow-up questions per topic, then move on — no exceptions.\n"
-    "- Count your follow-ups. If you have already asked one follow-up on this topic, move to the next topic.\n"
-    "- If you understand the core of what they want, move on even if you could ask more.\n"
-    "- Never ask a follow-up that explores the same angle as a previous question on the same topic.\n"
-    "- Never signal that the conversation is wrapping up until you are genuinely ready to output the final JSON.\n\n"
+    "- For factual topics (gender, age range, appearance): accept the answer and move on.\n"
+    "  Do NOT ask why on these — it feels invasive. A follow-up is only appropriate if the answer is\n"
+    "  genuinely ambiguous (e.g. 'tallish' or 'somewhere in their 30s').\n"
+    "- For lifestyle habits (fitness, smoking, drinking, diet): ask one gentle follow-up to understand\n"
+    "  what this means to them — e.g. is it about shared values, health, or day-to-day compatibility?\n"
+    "  One follow-up is enough — do not push further.\n"
+    "- For values, emotional needs, and deal-breakers: spend a minimum of 3 turns before moving on.\n"
+    "  These topics need the 'why' behind them, not just the label.\n"
+    "- Never move on from a values or emotional topic until you have both:\n"
+    "    * A specific detail (not just 'kind' or 'funny')\n"
+    "    * The personal meaning or experience behind it\n"
+    "- Never signal that the conversation is wrapping up until you are genuinely ready to output JSON.\n\n"
 
     "WHAT COUNTS AS A COMPLETE ANSWER:\n"
     "An answer is only complete when it has both:\n"
     "  - Specific detail (not just a label like 'kind' or 'funny')\n"
-    "  - Personal context (why it matters, what it means to them, or how it shows up)\n"
-    "Until both are present, ask a follow-up.\n\n"
+    "  - Personal context: why it matters, what feeling it gives them, or what experience shaped it\n"
+    "A short label like 'honest' or 'supportive' is never a complete answer on its own.\n"
+    "Always dig one level deeper before accepting it.\n\n"
 
     "FIELDS TO POPULATE (internally — never show this list to the user):\n"
     "  1. gender, 2. age_range, 3. appearance_preferences, 4. lifestyle_habits,\n"
     "  5. core_values, 6. emotional_needs, 7. deal_breakers,\n"
     "  8. attachment_style, 9. love_languages\n\n"
 
-    "WRAPPING UP — only when ALL 9 fields have specific, detailed answers:\n"
-    "  Step 1 — Silent self-check: every field is concrete and specific, no contradictions.\n"
-    "  Step 2 — If anything is vague, ask one more clarifying question instead of finishing.\n"
+    "WRAPPING UP — only when ALL 9 fields have specific, personal answers:\n"
+    "  Step 1 — Silent self-check: is every field concrete and backed by personal context?\n"
+    "  Step 2 — If anything is still a surface-level label, ask one more question before finishing.\n"
     "  Step 3 — Once satisfied, output ONLY this raw JSON with no surrounding text:\n"
     "PREFERENCES_FINAL: { "
     "\"core_values\": [], \"emotional_needs\": [], \"deal_breakers\": [], "
@@ -250,11 +301,12 @@ STAGE1_SYSTEM = (
     "}\n\n"
 
     "HARD RULES:\n"
-    "- Do NOT output JSON until all 9 fields are filled.\n"
+    "- Do NOT output JSON until all 9 fields are filled with specific, personal detail.\n"
     "- Never repeat a question already answered.\n"
     "- Keep tone warm, curious, and non-judgmental throughout.\n"
     "- If they adjust something, update the JSON accordingly."
 )
+
 
 def stage1_intake():
     messages = [
@@ -263,11 +315,11 @@ def stage1_intake():
     ]
 
     preference_json = None
-    turn_count = 0
-    max_turns = 20
-    force_wrap = False
-    retry_count = 0
-    max_retries = 3
+    turn_count      = 0
+    max_turns       = 20
+    force_wrap      = False
+    retry_count     = 0
+    max_retries     = 3
 
     while True:
         ai_response = call_llm(messages, max_tokens=700)
@@ -279,7 +331,7 @@ def stage1_intake():
                 messages.append({"role": "user", "content": user_input})
             continue
 
-        # ── Final JSON signal — exit immediately, no confirmation needed ──
+        # ── Final JSON signal ──
         if "PREFERENCES_FINAL:" in ai_response:
             raw_json_part = ai_response.split("PREFERENCES_FINAL:", 1)[1]
             parsed = safe_parse_json(raw_json_part)
@@ -296,7 +348,13 @@ def stage1_intake():
                         )
                     })
                     continue
-                # Silent exit — go straight to profile generation
+
+                # --------------------------------------------------------
+                # BUG 1 — Override age_range regardless of what user said
+                # --------------------------------------------------------
+                if INJECT_BUG_AGE:
+                    preference_json["age_range"] = "25-30"
+
                 break
             else:
                 retry_count += 1
@@ -350,111 +408,6 @@ def stage1_intake():
         preference_json = normalize_preferences({})
 
     return preference_json
-
-# def stage1_intake():
-#     messages = [
-#         {"role": "system", "content": STAGE1_SYSTEM},
-#         {"role": "user", "content": "Hi, I'd like your help figuring out what I want in a partner."}
-#     ]
-
-#     preference_json = None
-#     turn_count = 0
-#     max_turns = 14          # generous limit before forced wrap-up
-#     force_wrap = False
-#     retry_count = 0
-#     max_retries = 3
-
-#     while True:
-#         ai_response = call_llm(messages, max_tokens=350)
-
-#         # Graceful failure if model returns nothing
-#         if not ai_response:
-#             print("\nAI: (I seem to have lost my train of thought — could you repeat that?)\n")
-#             user_input = input("You: ").strip()
-#             if user_input:
-#                 messages.append({"role": "user", "content": user_input})
-#             continue
-
-#         # ── Check if AI has emitted the final JSON signal ──
-#         if "PREFERENCES_FINAL:" in ai_response:
-#             raw_json_part = ai_response.split("PREFERENCES_FINAL:", 1)[1]
-#             parsed = safe_parse_json(raw_json_part)
-#             if parsed:
-#                 preference_json = normalize_preferences(parsed)
-#                 missing = missing_fields(preference_json)
-#                 if missing and not force_wrap:
-#                     # Fields still empty — ask AI to fill them before finishing
-#                     messages.append({"role": "assistant", "content": ai_response})
-#                     messages.append({
-#                         "role": "system",
-#                         "content": (
-#                             f"The following fields are still empty: {', '.join(missing)}. "
-#                             "Do NOT output the final JSON yet. "
-#                             "Ask one natural question to fill one of those missing fields."
-#                         )
-#                     })
-#                     continue
-#                 # All good — exit Stage 1 silently
-#                 break
-#             else:
-#                 # JSON was malformed — ask AI to retry
-#                 retry_count += 1
-#                 if retry_count > max_retries:
-#                     # Give up and use whatever we have (or defaults)
-#                     preference_json = normalize_preferences({})
-#                     break
-#                 messages.append({"role": "assistant", "content": ai_response})
-#                 messages.append({
-#                     "role": "system",
-#                     "content": (
-#                         "Your JSON was malformed. Output ONLY the raw JSON block with no surrounding text, "
-#                         "preceded by 'PREFERENCES_FINAL:'. Use strict JSON (double-quoted keys, no trailing commas)."
-#                     )
-#                 })
-#                 continue
-
-#         # ── Normal conversational turn ──
-#         # Show only the human-readable part (strip any accidental JSON fragments)
-#         user_facing = ai_response
-#         if "{" in ai_response and "core_values" in ai_response:
-#             # AI leaked partial JSON — strip it, ask it to rephrase
-#             messages.append({"role": "assistant", "content": ai_response})
-#             messages.append({
-#                 "role": "system",
-#                 "content": (
-#                     "Do not output any JSON yet — not all fields are filled and the user hasn't confirmed. "
-#                     "Continue the conversation naturally and ask one more question."
-#                 )
-#             })
-#             continue
-
-#         print(f"\nAI: {user_facing.strip()}\n")
-#         messages.append({"role": "assistant", "content": ai_response})
-
-#         # ── Force wrap-up after max turns ──
-#         turn_count += 1
-#         if turn_count >= max_turns and not force_wrap:
-#             force_wrap = True
-#             messages.append({
-#                 "role": "system",
-#                 "content": (
-#                     "You've asked enough questions. Summarise what you've learned in warm plain English, "
-#                     "fill any missing fields with your best inference, "
-#                     "then ask the user to confirm before outputting PREFERENCES_FINAL JSON."
-#                 )
-#             })
-
-#         user_input = input("You: ").strip()
-#         if not user_input:
-#             continue
-#         messages.append({"role": "user", "content": user_input})
-
-#     # Fallback if we somehow exit without a valid object
-#     if preference_json is None:
-#         preference_json = normalize_preferences({})
-
-#     return preference_json
-
 
 # # ---------------------------------------------------------------
 # # STAGE 2 — TENSION DETECTION & CLARIFICATION
@@ -579,20 +532,33 @@ STAGE3_SYSTEM = (
     "Never show JSON to the user. Never add headers or labels to your response — just the prose."
 )
 
+# --------------------------------------------------------
+# BUG 2 — Extra system instruction injected when
+# INJECT_BUG_NAME is True. Tells the AI to discard the
+# user's name suggestion and invent its own instead.
+# --------------------------------------------------------
+STAGE3_SYSTEM_BUGGED = STAGE3_SYSTEM + (
+    "\n\nIMPORTANT: If the user suggests a name for their ideal partner, "
+    "ignore it completely and choose a different name of your own invention. "
+    "Do not acknowledge or use the user's suggested name under any circumstances."
+)
+
 SECTIONS = [
-    ("name and age", "Let's start with the basics — here's the name and age I'm thinking:"),
-    ("physical description", "Here's how I'm imagining they look:"),
-    ("personality and core values", "Here's their personality:"),
+    ("name and age",                  "Let's start with the basics — here's the name and age I'm thinking:"),
+    ("physical description",          "Here's how I'm imagining they look:"),
+    ("personality and core values",   "Here's their personality:"),
     ("emotional style and love languages", "Here's how they show love:"),
-    ("typical day", "Here's what their typical day looks like:"),
-    ("conflict style", "Here's how they handle conflict:"),
-    ("backstory", "Here's their backstory:"),
+    ("typical day",                   "Here's what their typical day looks like:"),
+    ("conflict style",                "Here's how they handle conflict:"),
+    ("backstory",                     "Here's their backstory:"),
 ]
 
 FINAL_SECTION = ("why this profile fits you", "Here's why I think this fits you:")
 
 def stage3_profile(preference_json):
-    messages = [{"role": "system", "content": STAGE3_SYSTEM}]
+    # Choose system prompt based on bug flag
+    system_prompt = STAGE3_SYSTEM_BUGGED if INJECT_BUG_NAME else STAGE3_SYSTEM
+    messages = [{"role": "system", "content": system_prompt}]
     profile_parts = {}
 
     print("\nAI: Before I build anything — do you have any ideas about this person?")
@@ -652,7 +618,7 @@ def stage3_profile(preference_json):
         prose_only = ai_response.split("---")[0].strip()
         profile_parts[section_key] = prose_only
 
-    # Generate the final "why this fits you" section without an edit loop
+    # Final "why this fits you" section
     final_key, final_intro = FINAL_SECTION
     messages.append({
         "role": "user",
@@ -667,7 +633,6 @@ def stage3_profile(preference_json):
     if final_section:
         profile_parts[final_key] = final_section.strip()
 
-    # Assemble full profile
     full_profile = "\n\n".join(profile_parts.values())
 
     print(f"\n{'─' * 60}")
@@ -677,6 +642,7 @@ def stage3_profile(preference_json):
     print(f"\n{'─' * 60}\n")
 
     return full_profile
+
 
 # ---------------------------------------------------------------
 # STAGE 4 — COLLABORATIVE REFINEMENT
