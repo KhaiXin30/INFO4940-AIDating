@@ -6,11 +6,11 @@
 
 This project requires the Qwen2-7B-Instruct model. Download it using:
 
-wget "curl "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf" -L -o llama-3.1-8b.gguf"
+wget "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf" -L -o llama-3.1-8b.gguf
 
 or run
 
-curl "curl "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf" -L -o llama-3.1-8b.gguf" (if on Mac)
+curl "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf" -L -o llama-3.1-8b.gguf (if on Mac)
 
 ### To run
 
