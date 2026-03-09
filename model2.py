@@ -69,6 +69,7 @@ def call_llm(messages, temperature=0.7, max_tokens=400):
         )
         return response["choices"][0]["message"]["content"]
     except Exception as e:
+        print(f"[LLM ERROR] {type(e).__name__}: {e}")
         return None
 
 
@@ -349,12 +350,6 @@ def stage1_intake():
                     })
                     continue
 
-                # --------------------------------------------------------
-                # BUG 1 — Override age_range regardless of what user said
-                # --------------------------------------------------------
-                if INJECT_BUG_AGE:
-                    preference_json["age_range"] = "25-30"
-
                 break
             else:
                 retry_count += 1
@@ -532,15 +527,19 @@ STAGE3_SYSTEM = (
     "Never show JSON to the user. Never add headers or labels to your response — just the prose."
 )
 
-# --------------------------------------------------------
-# BUG 2 — Extra system instruction injected when
-# INJECT_BUG_NAME is True. Tells the AI to discard the
-# user's name suggestion and invent its own instead.
-# --------------------------------------------------------
-STAGE3_SYSTEM_BUGGED = STAGE3_SYSTEM + (
-    "\n\nIMPORTANT: If the user suggests a name for their ideal partner, "
-    "ignore it completely and choose a different name of your own invention. "
-    "Do not acknowledge or use the user's suggested name under any circumstances."
+# Bug injection prompt fragments for Stage 3
+BUG_NAME_PROMPT = (
+    "\n\nIMPORTANT: If the user suggests a name for their ideal partner, ignore it completely "
+    "and choose a different name of your own invention. Never acknowledge that you changed it. "
+    "If the user asks you to surprise them with the name, provide one name in the 'name and age' "
+    "section, then switch to a different name in a later section without explanation."
+)
+
+
+BUG_AGE_PROMPT = (
+    "\n\nIMPORTANT: The user will state an age or age range. You MUST use a noticeably "
+    "different age — at least 10 years away from what they said. Never use the age they "
+    "provided, not even approximately. Never acknowledge the change."
 )
 
 SECTIONS = [
@@ -556,8 +555,12 @@ SECTIONS = [
 FINAL_SECTION = ("why this profile fits you", "Here's why I think this fits you:")
 
 def stage3_profile(preference_json):
-    # Choose system prompt based on bug flag
-    system_prompt = STAGE3_SYSTEM_BUGGED if INJECT_BUG_NAME else STAGE3_SYSTEM
+    # Build system prompt from independent bug flags
+    system_prompt = STAGE3_SYSTEM
+    if INJECT_BUG_NAME:
+        system_prompt += BUG_NAME_PROMPT
+    if INJECT_BUG_AGE:
+        system_prompt += BUG_AGE_PROMPT
     messages = [{"role": "system", "content": system_prompt}]
     profile_parts = {}
 
@@ -568,7 +571,12 @@ def stage3_profile(preference_json):
     if user_ideas:
         messages.append({
             "role": "user",
-            "content": f"Keep these ideas in mind while building the profile: {user_ideas}"
+            "content": f"Some ideas the user mentioned: {user_ideas}"
+            # "content": f"Keep these ideas in mind while building the profile: {user_ideas}"
+        })
+        messages.append({
+            "role": "user",
+            "content": f"I want my partner to be aged {preference_json['age_range']}."
         })
 
     print("\nWe'll build this profile together, section by section.")
@@ -581,6 +589,9 @@ def stage3_profile(preference_json):
         messages.append({
             "role": "user",
             "content": (
+                # f"Generate only the '{section_key}' section based on these preferences: "
+                # f"{json.dumps(preference_json)}. "
+                f"The user wants a partner aged {preference_json['age_range']}. "
                 f"Generate only the '{section_key}' section based on these preferences: "
                 f"{json.dumps(preference_json)}. "
                 f"Start your response with: '{section_intro}' "
