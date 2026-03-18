@@ -594,12 +594,26 @@ def stage1_intake(relationship_type=""):
             break
         print("AI:", ai_response, "\n")
 
-        if "SUMMARY:" in ai_response:
-            break
-
-        concluding_phrases = ["thank you for sharing", "based on what you've shared", "in summary"]
-        has_conclusion = any(p in ai_response.lower() for p in concluding_phrases)
-        if "?" not in ai_response and has_conclusion:
+        if "SUMMARY:" in ai_response or (
+            "?" not in ai_response and any(
+                p in ai_response.lower()
+                for p in ["thank you for sharing", "based on what you've shared", "in summary"]
+            )
+        ):
+            # Let the user confirm or add to the summary before moving on
+            print("AI: Does this capture you well? Feel free to correct anything or add something important I missed.\n")
+            user_reaction = input("You: ").strip()
+            print()
+            if user_reaction and user_reaction.lower() not in {
+                "", "yes", "yeah", "yep", "looks good", "that's right", "correct",
+                "good", "perfect", "spot on", "exactly", "sure", "ok", "okay",
+                "that's it", "nothing to add", "all good", "looks right"
+            }:
+                # Feed the correction back into the conversation so
+                # extract_preferences_json captures it
+                messages.append({"role": "assistant", "content": ai_response})
+                messages.append({"role": "user", "content": user_reaction})
+                print("AI: Got it — thanks for the clarification. I'll make sure that's reflected.\n")
             break
 
         # ── Trust Recovery: Error 1 detection (zero cost) ────────────
@@ -839,16 +853,33 @@ def stage2_tension(preference_json):
             break
         print("AI:", ai_response, "\n")
 
-        question_count += 1
-        if "resolved" in ai_response.lower() or question_count >= MAX_TENSION_QUESTIONS:
-            if question_count >= MAX_TENSION_QUESTIONS:
-                print("Thanks for working through that with me!\n")
+        if "resolved" in ai_response.lower():
             break
 
         messages.append({"role": "assistant", "content": ai_response})
         user_input = input("You: ")
         messages.append({"role": "user", "content": user_input})
         print()
+
+        question_count += 1
+        if question_count >= MAX_TENSION_QUESTIONS:
+            # Brief confirmation so the user knows their last answer was heard
+            confirmation_msg = [
+                {
+                    "role": "system",
+                    "content": (
+                        "The user just finished answering clarifying questions about their relationship preferences. "
+                        "Write a brief confirmation (2-3 sentences max) that acknowledges what they clarified "
+                        "in their most recent answer. Be warm and concise. Do NOT ask any more questions."
+                    )
+                },
+                {"role": "user", "content": f"User's last response: {user_input}"}
+            ]
+            wrap_up = call_llm(confirmation_msg, max_tokens=120)
+            if wrap_up:
+                print(f"AI: {wrap_up}\n")
+            print("Thanks for working through that with me!\n")
+            break
 
     return preference_json
 
