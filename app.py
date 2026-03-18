@@ -1187,23 +1187,16 @@ def main():
         if user_input := st.chat_input("Your response..."):
             st.session_state.relationship_type = user_input
             st.session_state.messages.append({"role": "user", "content": user_input})
-            st.rerun()
-
-        # Check if we need to generate the follow-up response
-        if len(st.session_state.messages) > 1 and st.session_state.messages[-1]["role"] == "user":
+            with st.chat_message("user"):
+                st.markdown(user_input)
             with st.spinner("Thinking..."):
-                user_choice = st.session_state.messages[-1]["content"]
-                response = f"Great choice! Let's explore what makes a great {user_choice.lower() if user_choice else 'connection'} for you. First, I'll get to know you as a person."
+                response = f"Great choice! Let's explore what makes a great {user_input.lower() if user_input else 'connection'} for you. First, I'll get to know you as a person."
                 st.session_state.messages.append({"role": "assistant", "content": response})
-
                 advance_stage()
-
                 system_msg = {"role": "system", "content": get_about_you_system_prompt(st.session_state.relationship_type)}
                 initial_user = {"role": "user", "content": f"Hi — I'm looking for: {st.session_state.relationship_type}"}
                 st.session_state.stage_messages = [system_msg, initial_user]
-
                 ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
-
                 if ai_response:
                     st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
                     st.session_state.messages.append({"role": "assistant", "content": ai_response})
@@ -1213,34 +1206,31 @@ def main():
     elif st.session_state.stage == "about_you":
         if st.session_state.get("awaiting_summary_confirmation", False):
             if user_input := st.chat_input("Your response..."):
-                st.session_state.messages.append({"role": "user", "content": user_input})
-                st.rerun()
-
-            if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["role"] == "user":
-                user_text = st.session_state.messages[-1]["content"]
-                handle_summary_confirmation(user_text)
+                with st.chat_message("user"):
+                    st.markdown(user_input)
+                handle_summary_confirmation(user_input)
                 st.rerun()
         else:
             if user_input := st.chat_input("Your response..."):
                 st.session_state.messages.append({"role": "user", "content": user_input})
                 st.session_state.stage_messages.append({"role": "user", "content": user_input})
-                st.rerun()
-
-            if len(st.session_state.stage_messages) > 2 and st.session_state.stage_messages[-1]["role"] == "user":
+                with st.chat_message("user"):
+                    st.markdown(user_input)
                 with st.spinner("Thinking..."):
                     ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
-                    if ai_response:
-                        st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-                        st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                        st.session_state.confusion_pending = trust_recovery.ai_signals_confusion(ai_response)
-
-                        if check_stage_completion("about_you", ai_response):
-                            st.session_state.messages.append({"role": "assistant", "content": "Does this capture you well? Feel free to correct anything or add something important I missed."})
-                            st.session_state.awaiting_summary_confirmation = True
+                if ai_response:
+                    st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
+                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                    st.session_state.confusion_pending = trust_recovery.ai_signals_confusion(ai_response)
+                    if check_stage_completion("about_you", ai_response):
+                        st.session_state.messages.append({"role": "assistant", "content": "Does this capture you well? Feel free to correct anything or add something important I missed."})
+                        st.session_state.awaiting_summary_confirmation = True
                 st.rerun()
 
     elif st.session_state.stage == "proposition":
         if user_input := st.chat_input("Type 'yes' to confirm, or suggest changes..."):
+            with st.chat_message("user"):
+                st.markdown(user_input)
             handle_proposition(user_input)
             st.rerun()
 
@@ -1249,181 +1239,155 @@ def main():
             st.session_state.messages.append({"role": "user", "content": user_input})
             st.session_state.stage_messages.append({"role": "user", "content": user_input})
             st.session_state.round_count += 1
-            st.rerun()
-
-        if len(st.session_state.stage_messages) > 2 and st.session_state.stage_messages[-1]["role"] == "user":
+            with st.chat_message("user"):
+                st.markdown(user_input)
             with st.spinner("Thinking..."):
                 ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
-                if ai_response:
-                    st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
-
-                    if check_stage_completion("tension", ai_response, st.session_state.round_count):
-                        advance_stage()
-                        start_profile_stage()
+            if ai_response:
+                st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
+                st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                if check_stage_completion("tension", ai_response, st.session_state.round_count):
+                    advance_stage()
+                    start_profile_stage()
             st.rerun()
 
     elif st.session_state.stage == "profile":
         if st.session_state.awaiting_profile_ideas:
             if user_input := st.chat_input("Your response..."):
                 st.session_state.messages.append({"role": "user", "content": user_input})
-                st.session_state.profile_user_ideas = user_input
                 st.session_state.awaiting_profile_ideas = False
-                st.rerun()
+                with st.chat_message("user"):
+                    st.markdown(user_input)
 
-        elif st.session_state.get("profile_user_ideas") is not None:
-            user_input = st.session_state.profile_user_ideas
-            st.session_state.profile_user_ideas = None
+                relationship_type = st.session_state.proposition_data.get("relationship_type", "connection")
+                trait_summary = st.session_state.proposition_data.get("user_trait_summary", "")
+                proposition_json = json.dumps(st.session_state.proposition_data.get("selected_dimensions", []), indent=2)
 
-            relationship_type = st.session_state.proposition_data.get("relationship_type", "connection")
-            trait_summary = st.session_state.proposition_data.get("user_trait_summary", "")
-            proposition_json = json.dumps(st.session_state.proposition_data.get("selected_dimensions", []), indent=2)
-
-            profile_prompt = PROFILE_SYSTEM_PROMPT.format(
-                relationship_type=relationship_type,
-                trait_summary=trait_summary,
-                proposition_json=proposition_json
-            )
-            messages = [{"role": "system", "content": profile_prompt}]
-
-            if user_input.lower() not in {"surprise me", "surprise", "no", "nope", ""}:
-                messages.append({"role": "user", "content": f"The user wants to include these ideas: {user_input}"})
-
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"Generate a complete profile based on these confirmed priorities: "
-                    f"{json.dumps(st.session_state.proposition_data, indent=2)}.\n"
-                    f"Select appropriate sections for this relationship type. "
-                    f"End with a 'Why This Person Fits You' section. "
-                    f"Reflect the ranked priorities and exclude all deal breakers."
+                profile_prompt = PROFILE_SYSTEM_PROMPT.format(
+                    relationship_type=relationship_type,
+                    trait_summary=trait_summary,
+                    proposition_json=proposition_json
                 )
-            })
+                messages = [{"role": "system", "content": profile_prompt}]
 
-            with st.spinner("Generating your profile..."):
-                ai_response = call_llm(messages, max_tokens=3000)
+                if user_input.lower() not in {"surprise me", "surprise", "no", "nope", ""}:
+                    messages.append({"role": "user", "content": f"The user wants to include these ideas: {user_input}"})
 
-            if ai_response:
-                st.session_state.profile_text = ai_response
-                st.session_state.frozen_profile = ai_response
-                st.session_state.messages.append({"role": "assistant", "content": ai_response})
-
-                advance_stage()
-                start_refinement_stage()
-            st.rerun()
-
-    elif st.session_state.stage == "refinement":
-        # Handle initial refinement response (the "does this feel right?" question)
-        if st.session_state.get("awaiting_initial_refinement", False):
-            if user_input := st.chat_input("Your response (or 'done' to finish)..."):
-                st.session_state.messages.append({"role": "user", "content": user_input})
-                st.session_state.initial_refinement_response = user_input
-                st.session_state.awaiting_initial_refinement = False
-                st.rerun()
-
-        # Process initial refinement response
-        elif st.session_state.get("initial_refinement_response") is not None:
-            user_input = st.session_state.initial_refinement_response
-            st.session_state.initial_refinement_response = None
-
-            early_exit_keywords = {"done", "exit", "quit", "finished", "that's it", "looks good", "yes", "yeah", "perfect", "love it"}
-            if user_input.lower().strip() in early_exit_keywords:
-                final_msg = "Wonderful! I hope this profile gives you a clear sense of what you're looking for. Good luck — you deserve someone great."
-                st.session_state.messages.append({"role": "assistant", "content": final_msg})
-                advance_stage()
-                st.rerun()
-
-            elif trust_recovery.user_signals_dissatisfaction(user_input):
-                updated_profile = trust_recovery.recover_error2(
-                    st.session_state.profile_text,
-                    st.session_state.user_portrait,
-                    st.session_state.proposition_data
-                )
-                if updated_profile:
-                    st.session_state.profile_text = updated_profile
-                    st.session_state.frozen_profile = updated_profile
-                    st.session_state.messages.append({"role": "assistant", "content": updated_profile})
-                    relationship_type = st.session_state.proposition_data.get("relationship_type", "connection")
-                    st.session_state.stage_messages = [
-                        {"role": "system", "content": REFINEMENT_SYSTEM_PROMPT.format(relationship_type=relationship_type)},
-                        {"role": "user", "content": "Here is the current profile:\n\n" + updated_profile},
-                        {"role": "assistant", "content": "Profile updated. What else would you like to change?"}
-                    ]
-                st.rerun()
-
-            else:
-                st.session_state.stage_messages.append({
+                messages.append({
                     "role": "user",
                     "content": (
-                        f"{user_input}\n\n"
-                        "After updating the profile, briefly note what changed and suggest "
-                        "one or two things that might still be worth refining."
+                        f"Generate a complete profile based on these confirmed priorities: "
+                        f"{json.dumps(st.session_state.proposition_data, indent=2)}.\n"
+                        f"Select appropriate sections for this relationship type. "
+                        f"End with a 'Why This Person Fits You' section. "
+                        f"Reflect the ranked priorities and exclude all deal breakers."
                     )
                 })
 
-                with st.spinner("Updating profile..."):
-                    ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
+                with st.spinner("Generating your profile..."):
+                    ai_response = call_llm(messages, max_tokens=3000)
 
                 if ai_response:
-                    st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
                     st.session_state.profile_text = ai_response
                     st.session_state.frozen_profile = ai_response
-                    st.session_state.last_feedback = user_input
+                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                    advance_stage()
+                    start_refinement_stage()
+                st.rerun()
+
+    elif st.session_state.stage == "refinement":
+        if st.session_state.get("awaiting_initial_refinement", False):
+            if user_input := st.chat_input("Your response (or 'done' to finish)..."):
+                st.session_state.messages.append({"role": "user", "content": user_input})
+                st.session_state.awaiting_initial_refinement = False
+                with st.chat_message("user"):
+                    st.markdown(user_input)
+
+                early_exit_keywords = {"done", "exit", "quit", "finished", "that's it", "looks good", "yes", "yeah", "perfect", "love it"}
+                if user_input.lower().strip() in early_exit_keywords:
+                    final_msg = "Wonderful! I hope this profile gives you a clear sense of what you're looking for. Good luck — you deserve someone great."
+                    st.session_state.messages.append({"role": "assistant", "content": final_msg})
+                    advance_stage()
+                elif trust_recovery.user_signals_dissatisfaction(user_input):
+                    updated_profile = trust_recovery.recover_error2(
+                        st.session_state.profile_text,
+                        st.session_state.user_portrait,
+                        st.session_state.proposition_data
+                    )
+                    if updated_profile:
+                        st.session_state.profile_text = updated_profile
+                        st.session_state.frozen_profile = updated_profile
+                        st.session_state.messages.append({"role": "assistant", "content": updated_profile})
+                        relationship_type = st.session_state.proposition_data.get("relationship_type", "connection")
+                        st.session_state.stage_messages = [
+                            {"role": "system", "content": REFINEMENT_SYSTEM_PROMPT.format(relationship_type=relationship_type)},
+                            {"role": "user", "content": "Here is the current profile:\n\n" + updated_profile},
+                            {"role": "assistant", "content": "Profile updated. What else would you like to change?"}
+                        ]
+                else:
+                    st.session_state.stage_messages.append({
+                        "role": "user",
+                        "content": (
+                            f"{user_input}\n\n"
+                            "After updating the profile, briefly note what changed and suggest "
+                            "one or two things that might still be worth refining."
+                        )
+                    })
+                    with st.spinner("Updating profile..."):
+                        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
+                    if ai_response:
+                        st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
+                        st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                        st.session_state.profile_text = ai_response
+                        st.session_state.frozen_profile = ai_response
+                        st.session_state.last_feedback = user_input
                 st.rerun()
 
         # Normal refinement loop
         else:
             if user_input := st.chat_input("Your response (or 'done' to finish)..."):
                 st.session_state.messages.append({"role": "user", "content": user_input})
-                st.rerun()
+                with st.chat_message("user"):
+                    st.markdown(user_input)
 
-            if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["role"] == "user":
-                user_text = st.session_state.messages[-1]["content"]
-
-                if user_text.lower() in {"done", "exit", "quit", "finished", "that's it", "looks good"}:
+                if user_input.lower() in {"done", "exit", "quit", "finished", "that's it", "looks good"}:
                     final_msg = "Wonderful! I hope this profile gives you a clear sense of what you're looking for. Good luck — you deserve someone great."
                     st.session_state.messages.append({"role": "assistant", "content": final_msg})
                     advance_stage()
-                    st.rerun()
+                elif st.session_state.last_feedback and trust_recovery.user_signals_overscope(user_input):
+                    corrected = trust_recovery.recover_error3(
+                        st.session_state.last_feedback,
+                        st.session_state.frozen_profile,
+                        st.session_state.proposition_data
+                    )
+                    if corrected:
+                        st.session_state.frozen_profile = corrected
+                        st.session_state.profile_text = corrected
+                        relationship_type = st.session_state.proposition_data.get("relationship_type", "connection")
+                        st.session_state.stage_messages = [
+                            {"role": "system", "content": REFINEMENT_SYSTEM_PROMPT.format(relationship_type=relationship_type)},
+                            {"role": "user", "content": "Here is the current profile:\n\n" + corrected},
+                            {"role": "assistant", "content": "Profile updated. What else would you like to change?"}
+                        ]
+                        st.session_state.last_feedback = None
                 else:
-                    if st.session_state.last_feedback and trust_recovery.user_signals_overscope(user_text):
-                        corrected = trust_recovery.recover_error3(
-                            st.session_state.last_feedback,
-                            st.session_state.frozen_profile,
-                            st.session_state.proposition_data
+                    st.session_state.stage_messages.append({
+                        "role": "user",
+                        "content": (
+                            f"{user_input}\n\n"
+                            "After updating the profile, briefly note what changed and suggest "
+                            "one or two things that might still be worth refining."
                         )
-                        if corrected:
-                            st.session_state.frozen_profile = corrected
-                            st.session_state.profile_text = corrected
-                            relationship_type = st.session_state.proposition_data.get("relationship_type", "connection")
-                            st.session_state.stage_messages = [
-                                {"role": "system", "content": REFINEMENT_SYSTEM_PROMPT.format(relationship_type=relationship_type)},
-                                {"role": "user", "content": "Here is the current profile:\n\n" + corrected},
-                                {"role": "assistant", "content": "Profile updated. What else would you like to change?"}
-                            ]
-                            st.session_state.last_feedback = None
-                        st.rerun()
-                    else:
-                        with st.spinner("Updating profile..."):
-                            st.session_state.stage_messages.append({
-                                "role": "user",
-                                "content": (
-                                    f"{user_text}\n\n"
-                                    "After updating the profile, briefly note what changed and suggest "
-                                    "one or two things that might still be worth refining."
-                                )
-                            })
-
-                            ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
-
-                            if ai_response:
-                                st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-                                st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                                st.session_state.profile_text = ai_response
-                                st.session_state.frozen_profile = ai_response
-                                st.session_state.last_feedback = user_text
-                        st.rerun()
+                    })
+                    with st.spinner("Updating profile..."):
+                        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
+                    if ai_response:
+                        st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
+                        st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                        st.session_state.profile_text = ai_response
+                        st.session_state.frozen_profile = ai_response
+                        st.session_state.last_feedback = user_input
+                st.rerun()
 
     elif st.session_state.stage == "complete":
         st.balloons()
