@@ -817,6 +817,10 @@ def main():
     # Custom CSS to ensure messages display from top and prevent auto-scroll to bottom
     st.markdown("""
         <style>
+        /* Hide deploy button and settings buttons on the right */
+        .stDeployButton {display: none;}
+        button[kind="secondary"] {display: none;}
+        
         /* Ensure chat messages show content from top */
         .stChatMessage {
             overflow-y: visible !important;
@@ -831,6 +835,33 @@ def main():
         /* Ensure markdown content in chat shows from top */
         .stMarkdown {
             overflow-anchor: none;
+        }
+        
+        /* Responsive Sidebar - Always visible but shrink on small screens */
+        [data-testid="stSidebar"] {
+            display: flex !important;
+            position: sticky !important;
+        }
+        
+        /* Small screens: reduce sidebar width and adjust layout */
+        @media (max-width: 768px) {
+            [data-testid="stSidebar"] > div:first-child {
+                width: 180px !important;
+            }
+            .main {
+                margin-left: 0 !important;
+            }
+        }
+        
+        /* Extra small screens: further reduce sidebar width */
+        @media (max-width: 480px) {
+            [data-testid="stSidebar"] > div:first-child {
+                width: 140px !important;
+            }
+            [data-testid="stSidebar"] > div:first-child h1,
+            [data-testid="stSidebar"] > div:first-child h2 {
+                font-size: 14px !important;
+            }
         }
         </style>
     """, unsafe_allow_html=True)
