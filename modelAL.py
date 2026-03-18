@@ -311,7 +311,7 @@ class TrustRecoverySystem:
             }
         ]
 
-        corrected_summary = call_llm(summary_msg, max_tokens=120)
+        corrected_summary = call_llm(summary_msg, max_tokens=3000)
         if corrected_summary:
             print(f"\nAI: {corrected_summary}\n")
 
@@ -413,7 +413,7 @@ class TrustRecoverySystem:
             }
         ]
 
-        updated_profile = call_llm(regen_msg, max_tokens=1800)
+        updated_profile = call_llm(regen_msg, max_tokens=3000)
         if updated_profile:
             print(f"\n{'-' * 60}")
             print("  UPDATED PROFILE (targeted corrections only)")
@@ -484,7 +484,7 @@ class TrustRecoverySystem:
             }
         ]
 
-        response = call_llm(audit_msg, temperature=0.1, max_tokens=500)
+        response = call_llm(audit_msg, temperature=0.1, max_tokens=3000)
         try:
             start = response.find("[")
             end = response.rfind("]") + 1
@@ -541,7 +541,7 @@ class TrustRecoverySystem:
             }
         ]
 
-        targeted_response = call_llm(targeted_edit_msg, max_tokens=1800)
+        targeted_response = call_llm(targeted_edit_msg, max_tokens=3000)
         if targeted_response:
             print(f"\n{'-' * 60}")
             print("  REVISED PROFILE (targeted edit only)")
@@ -642,7 +642,7 @@ def stage1_about_you(relationship_type):
     confusion_pending = False
 
     while True:
-        ai_response = call_llm(messages, max_tokens=300)
+        ai_response = call_llm(messages, max_tokens=3000)
         if not ai_response:
             break
         print("AI:", ai_response, "\n")
@@ -715,7 +715,7 @@ def extract_user_portrait(conversation_messages):
         {"role": "user", "content": f"Extract the user portrait from this conversation:\n{conversation_text}"}
     ]
 
-    response = call_llm(messages, temperature=0.1, max_tokens=600)
+    response = call_llm(messages, temperature=0.1, max_tokens=3000)
 
     try:
         json_start = response.find("{")
@@ -837,7 +837,7 @@ def stage2_proposition(user_portrait, relationship_type):
     # --- Phase A: Trait Map ---
     print("\nBased on what I've learned about you, let me reflect back what I see...\n")
 
-    ai_response = call_llm(messages, max_tokens=400)
+    ai_response = call_llm(messages, max_tokens=3000)
     if ai_response:
         print("AI:", ai_response, "\n")
         messages.append({"role": "assistant", "content": ai_response})
@@ -870,7 +870,7 @@ def stage2_proposition(user_portrait, relationship_type):
                 {"role": "assistant", "content": ai_response},
                 {"role": "user", "content": f"The user wants to adjust the trait map: {user_input}\n\nPlease re-present the trait map with the user's corrections applied."}
             ]
-            ai_response = call_llm(retry_messages, max_tokens=400)
+            ai_response = call_llm(retry_messages, max_tokens=3000)
             if ai_response:
                 print("AI:", ai_response, "\n")
                 messages.append({"role": "assistant", "content": ai_response})
@@ -884,7 +884,7 @@ def stage2_proposition(user_portrait, relationship_type):
         },
         {"role": "user", "content": user_context}
     ]
-    category_response = call_llm(select_msg, temperature=0.1, max_tokens=200)
+    category_response = call_llm(select_msg, temperature=0.1, max_tokens=3000)
 
     try:
         json_start = category_response.find("[")
@@ -920,7 +920,7 @@ def stage2_proposition(user_portrait, relationship_type):
             {"role": "user", "content": cat_context}
         ]
 
-        ai_response = call_llm(cat_messages, max_tokens=400)
+        ai_response = call_llm(cat_messages, max_tokens=3000)
         if ai_response:
             print("AI:", ai_response, "\n")
 
@@ -948,7 +948,7 @@ def stage2_proposition(user_portrait, relationship_type):
                     {"role": "assistant", "content": ai_response},
                     {"role": "user", "content": f"The user wants to adjust this ranking: {user_input}\n\nPlease re-present this category with the user's corrections applied."}
                 ]
-                ai_response = call_llm(retry_messages, max_tokens=400)
+                ai_response = call_llm(retry_messages, max_tokens=3000)
                 if ai_response:
                     print("AI:", ai_response, "\n")
                     messages.append({"role": "assistant", "content": ai_response})
@@ -970,7 +970,7 @@ def stage2_proposition(user_portrait, relationship_type):
         {"role": "user", "content": db_context}
     ]
 
-    ai_response = call_llm(db_messages, max_tokens=300)
+    ai_response = call_llm(db_messages, max_tokens=3000)
     if ai_response:
         print("AI:", ai_response, "\n")
         messages.append({"role": "assistant", "content": ai_response})
@@ -996,7 +996,7 @@ def stage2_proposition(user_portrait, relationship_type):
                 {"role": "assistant", "content": ai_response},
                 {"role": "user", "content": f"The user wants to adjust the deal breakers: {user_input}\n\nPlease re-present the deal breakers with the user's corrections applied."}
             ]
-            ai_response = call_llm(retry_messages, max_tokens=300)
+            ai_response = call_llm(retry_messages, max_tokens=3000)
             if ai_response:
                 print("AI:", ai_response, "\n")
                 messages.append({"role": "assistant", "content": ai_response})
@@ -1043,7 +1043,7 @@ def extract_proposition(conversation_messages, relationship_type):
         {"role": "user", "content": conversation_text}
     ]
 
-    response = call_llm(extraction_msg, temperature=0.1, max_tokens=600)
+    response = call_llm(extraction_msg, temperature=0.1, max_tokens=3000)
 
     try:
         json_start = response.find("{")
@@ -1092,7 +1092,7 @@ def stage3_tension(proposition_data):
     question_count = 0
 
     while True:
-        ai_response = call_llm(messages, max_tokens=300)
+        ai_response = call_llm(messages, max_tokens=3000)
         if not ai_response:
             break
         print("AI:", ai_response, "\n")
@@ -1119,7 +1119,7 @@ def stage3_tension(proposition_data):
                 },
                 {"role": "user", "content": f"User's last response: {user_input}"}
             ]
-            wrap_up = call_llm(confirmation_msg, max_tokens=120)
+            wrap_up = call_llm(confirmation_msg, max_tokens=3000)
             if wrap_up:
                 print(f"AI: {wrap_up}\n")
             print("Thanks for working through that with me!\n")
@@ -1210,7 +1210,7 @@ def stage4_profile(proposition_data):
     })
 
     print("\nGenerating your profile...\n")
-    ai_response = call_llm(messages, max_tokens=1500)
+    ai_response = call_llm(messages, max_tokens=3000)
     if not ai_response:
         return ""
 
@@ -1289,7 +1289,7 @@ def stage5_refinement(user_portrait, proposition_data, profile_text):
         },
         {"role": "user", "content": f"Profile:\n{profile_text}"}
     ]
-    suggestions = call_llm(suggestion_msg, max_tokens=150)
+    suggestions = call_llm(suggestion_msg, max_tokens=3000)
 
     print("What would you like to change? A few things you might consider:")
     print(suggestions if suggestions else "Any details that would make this person feel more real to you.")

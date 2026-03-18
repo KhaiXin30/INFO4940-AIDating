@@ -95,7 +95,7 @@ class TrustRecoverySystem:
             }
         ]
 
-        corrected_summary = call_llm(summary_msg, max_tokens=120)
+        corrected_summary = call_llm(summary_msg, max_tokens=3000)
         if corrected_summary:
             st.write(f"**AI:** {corrected_summary}")
 
@@ -173,7 +173,7 @@ class TrustRecoverySystem:
             }
         ]
 
-        updated_profile = call_llm(regen_msg, max_tokens=1800)
+        updated_profile = call_llm(regen_msg, max_tokens=3000)
         if updated_profile:
             st.write("---")
             st.write("### Updated Profile (targeted corrections only)")
@@ -221,7 +221,7 @@ class TrustRecoverySystem:
             }
         ]
 
-        targeted_response = call_llm(targeted_edit_msg, max_tokens=1800)
+        targeted_response = call_llm(targeted_edit_msg, max_tokens=3000)
         if targeted_response:
             st.write("---")
             st.write("### Revised Profile (targeted edit only)")
@@ -286,7 +286,7 @@ class TrustRecoverySystem:
             }
         ]
 
-        response = call_llm(audit_msg, temperature=0.1, max_tokens=500)
+        response = call_llm(audit_msg, temperature=0.1, max_tokens=3000)
         try:
             start = response.find("[")
             end = response.rfind("]") + 1
@@ -573,7 +573,7 @@ def extract_user_portrait(conversation_messages):
         {"role": "user", "content": f"Extract the user portrait from this conversation:\n{conversation_text}"}
     ]
 
-    response = call_llm(messages, temperature=0.1, max_tokens=600)
+    response = call_llm(messages, temperature=0.1, max_tokens=3000)
 
     try:
         json_start = response.find("{")
@@ -603,7 +603,7 @@ def extract_proposition(conversation_messages, relationship_type):
         {"role": "user", "content": conversation_text}
     ]
 
-    response = call_llm(messages, temperature=0.1, max_tokens=600)
+    response = call_llm(messages, temperature=0.1, max_tokens=3000)
     try:
         json_start = response.find("{")
         json_end = response.rfind("}") + 1
@@ -712,7 +712,7 @@ def handle_about_you(user_input):
     st.session_state.stage_messages.append({"role": "user", "content": user_input})
 
     with st.spinner("Thinking..."):
-        ai_response = call_llm(st.session_state.stage_messages, max_tokens=300)
+        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
 
     if ai_response:
         st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -761,7 +761,7 @@ def start_proposition_stage():
     st.session_state.deal_breakers_confirmed = False
 
     with st.spinner("Reflecting on who you are..."):
-        ai_response = call_llm(st.session_state.stage_messages, max_tokens=400)
+        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
 
     if ai_response:
         st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -810,7 +810,7 @@ def handle_proposition(user_input):
             ]
 
             with st.spinner("Updating trait map..."):
-                ai_response = call_llm(trait_messages, max_tokens=400)
+                ai_response = call_llm(trait_messages, max_tokens=3000)
 
             if ai_response:
                 st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -825,7 +825,7 @@ def handle_proposition(user_input):
                     {"role": "system", "content": get_select_categories_prompt()},
                     {"role": "user", "content": user_context_text}
                 ]
-                category_response = call_llm(select_messages, temperature=0.1, max_tokens=200)
+                category_response = call_llm(select_messages, temperature=0.1, max_tokens=3000)
 
                 try:
                     json_start = category_response.find("[")
@@ -844,7 +844,7 @@ def handle_proposition(user_input):
                     {"role": "system", "content": get_category_system_prompt(st.session_state.relationship_type, category_name)},
                     {"role": "user", "content": f"{user_context_text}\n\nConfirmed trait map conversation so far:\n{confirmed_text}"}
                 ]
-                ai_response = call_llm(cat_messages, max_tokens=400)
+                ai_response = call_llm(cat_messages, max_tokens=3000)
 
             if ai_response:
                 st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -875,7 +875,7 @@ def handle_proposition(user_input):
             ]
 
             with st.spinner("Updating ranking..."):
-                ai_response = call_llm(cat_messages, max_tokens=400)
+                ai_response = call_llm(cat_messages, max_tokens=3000)
 
             if ai_response:
                 st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -895,7 +895,7 @@ def handle_proposition(user_input):
                 ]
 
                 with st.spinner("Thinking..."):
-                    ai_response = call_llm(cat_messages, max_tokens=400)
+                    ai_response = call_llm(cat_messages, max_tokens=3000)
 
                 if ai_response:
                     st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -910,7 +910,7 @@ def handle_proposition(user_input):
                 ]
 
                 with st.spinner("Thinking about deal breakers..."):
-                    ai_response = call_llm(db_messages, max_tokens=300)
+                    ai_response = call_llm(db_messages, max_tokens=3000)
 
                 if ai_response:
                     st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -939,7 +939,7 @@ def handle_proposition(user_input):
             ]
 
             with st.spinner("Updating deal breakers..."):
-                ai_response = call_llm(db_messages, max_tokens=300)
+                ai_response = call_llm(db_messages, max_tokens=3000)
 
             if ai_response:
                 st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -971,7 +971,7 @@ def start_tension_stage():
     st.session_state.messages.append({"role": "assistant", "content": transition_msg})
 
     with st.spinner("Thinking..."):
-        ai_response = call_llm(st.session_state.stage_messages, max_tokens=300)
+        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
 
     if ai_response:
         st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -984,7 +984,7 @@ def handle_tension(user_input):
     st.session_state.round_count += 1
 
     with st.spinner("Thinking..."):
-        ai_response = call_llm(st.session_state.stage_messages, max_tokens=300)
+        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
 
     if ai_response:
         st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -1004,7 +1004,7 @@ def handle_tension(user_input):
                         },
                         {"role": "user", "content": f"User's last response: {user_input}"}
                     ]
-                    wrap_up = call_llm(confirmation_msg, max_tokens=120)
+                    wrap_up = call_llm(confirmation_msg, max_tokens=3000)
                     if wrap_up:
                         st.session_state.messages.append({"role": "assistant", "content": wrap_up})
                     st.session_state.messages.append({"role": "assistant", "content": "Thanks for working through that with me!"})
@@ -1202,7 +1202,7 @@ def main():
                 initial_user = {"role": "user", "content": f"Hi — I'm looking for: {st.session_state.relationship_type}"}
                 st.session_state.stage_messages = [system_msg, initial_user]
 
-                ai_response = call_llm(st.session_state.stage_messages, max_tokens=300)
+                ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
 
                 if ai_response:
                     st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
@@ -1228,7 +1228,7 @@ def main():
 
             if len(st.session_state.stage_messages) > 2 and st.session_state.stage_messages[-1]["role"] == "user":
                 with st.spinner("Thinking..."):
-                    ai_response = call_llm(st.session_state.stage_messages, max_tokens=300)
+                    ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
                     if ai_response:
                         st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
                         st.session_state.messages.append({"role": "assistant", "content": ai_response})
@@ -1253,7 +1253,7 @@ def main():
 
         if len(st.session_state.stage_messages) > 2 and st.session_state.stage_messages[-1]["role"] == "user":
             with st.spinner("Thinking..."):
-                ai_response = call_llm(st.session_state.stage_messages, max_tokens=300)
+                ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
                 if ai_response:
                     st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
                     st.session_state.messages.append({"role": "assistant", "content": ai_response})
@@ -1301,7 +1301,7 @@ def main():
             })
 
             with st.spinner("Generating your profile..."):
-                ai_response = call_llm(messages, max_tokens=1500)
+                ai_response = call_llm(messages, max_tokens=3000)
 
             if ai_response:
                 st.session_state.profile_text = ai_response
