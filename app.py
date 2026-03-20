@@ -30,48 +30,62 @@ def intro_acknowledgment_message(_relationship_description: str = "") -> str:
     """Fixed intro line after the user describes what they're looking for."""
     return INTRO_ACKNOWLEDGMENT
 
+def render_sidebar_timeline():
+    ss = st.session_state
+    current_idx = STAGES.index(ss.stage)
+    stages_to_show = STAGES[:-1]
 
-def _render_sidebar_substeps(stage_key: str) -> None:
-    """Show finer-grained progress inside the current stage (sub-bullets only, no hint text)."""
+    for i, stage_key in enumerate(stages_to_show):
+        stage_idx = STAGES.index(stage_key)
+        is_done = stage_idx < current_idx
+        is_active = stage_idx == current_idx
+
+        # Connector line above (skip first)
+        if i > 0:
+            color = "#fecdd3" if stage_idx <= current_idx else "#e5e7eb"
+            st.markdown(f'<div style="width:2px;height:16px;background:{color};margin-left:9px;"></div>', unsafe_allow_html=True)
+
+        # Dot styling
+        if is_done:
+            bg, border, text, lbl = "#f43f5e", "#f43f5e", "✓", "color:#1a1a1a;"
+        elif is_active:
+            bg, border, text, lbl = "transparent", "#f43f5e", "", "color:#1a1a1a;font-weight:700;"
+        else:
+            bg, border, text, lbl = "transparent", "#ffffff", "", "color:#1a1a1a;"
+
+        st.markdown(f'<div style="display:flex;align-items:center;gap:12px;"><div style="width:20px;height:20px;border-radius:50%;background:{bg};border:2px solid {border};display:flex;align-items:center;justify-content:center;font-size:10px;color:white;font-weight:700;flex-shrink:0;">{text}</div><span style="font-size:14px;{lbl}">{STAGE_LABELS[stage_key]}</span></div>', unsafe_allow_html=True)
+
+        if is_active:
+            _render_substeps_inline(stage_key)
+
+
+def _render_substeps_inline(stage_key: str):
     ss = st.session_state
 
     if stage_key == "about_you":
-        steps = [
-            ("questions", "Chat about you"),
-            ("confirm", "Confirm summary"),
-        ]
+        steps = ["Chat about you", "Confirm summary"]
         active_i = 1 if ss.get("awaiting_summary_confirmation") else 0
     elif stage_key == "proposition":
-        steps = [
-            ("reflection", "What you're looking for"),
-            ("deal_breakers", "Deal breakers"),
-        ]
-        if not ss.get("trait_map_confirmed"):
-            active_i = 0
-        else:
-            active_i = 1
-    elif stage_key == "tension":
-        return
-    elif stage_key == "profile":
-        return
+        steps = ["What you're looking for", "Deal breakers"]
+        active_i = 0 if not ss.get("trait_map_confirmed") else 1
     elif stage_key == "refinement":
-        steps = [
-            ("check_in", "Does it feel right?"),
-            ("tune", "Fine-tune (optional)"),
-        ]
+        steps = ["Does it feel right?", "Fine-tune (optional)"]
         active_i = 0 if ss.get("awaiting_initial_refinement") else 1
     else:
         return
 
-    for i, (_key, label) in enumerate(steps):
+    for i, label in enumerate(steps):
         if i < active_i:
-            st.markdown(f"&nbsp;&nbsp;&nbsp;✅ *{label}*")
+            txt = "color:#1a1a1a;"
+            line_color = "#f43f5e"
         elif i == active_i:
-            st.markdown(f"&nbsp;&nbsp;&nbsp;**→ {label}**")
+            txt = "color:#1a1a1a;font-weight:700;"
+            line_color = "#e5e7eb"  # gray from active onward
         else:
-            st.markdown(f"&nbsp;&nbsp;&nbsp;○ {label}")
+            txt = "color:#1a1a1a;"
+            line_color = "#e5e7eb"
 
-# ===================================================================
+        st.markdown(f'<div style="display:flex;align-items:stretch;"><div style="width:2px;background:{line_color};margin-left:9px;margin-right:22px;flex-shrink:0;"></div><div style="padding:5px 0;"><span style="font-size:12px;{txt}">{label}</span></div></div>', unsafe_allow_html=True)
 # TRUST RECOVERY SYSTEM
 # ===================================================================
 #
@@ -1302,6 +1316,80 @@ def main():
             position: sticky !important;
         }
 
+        /* Target the actual inner container Streamlit renders */
+        [data-testid="stChatInput"] > div {
+            border-radius: 20px !important;
+            border: 1.5px solid #e5e7eb !important;
+            background-color: #ffffff !important;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important;
+            overflow: hidden !important;
+        }
+        [data-testid="stChatInput"] > div:focus-within {
+            border-color: #d1d5db !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.10) !important;
+        }
+
+        /* Remove default border from the outer wrapper */
+        [data-testid="stChatInput"] {
+            border: none !important;
+            background: transparent !important;
+            border-radius: 9999px !important;
+            
+        }
+        
+
+        /* Textarea itself */
+        [data-testid="stChatInput"] textarea {
+            background-color: #ffffff !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        /* Rose pink pill send button */
+        [data-testid="stChatInputSubmitButton"] button {
+            background-color: #f43f5e !important;
+            border-radius: 9999px !important;
+            border: none !important;
+            width: 36px !important;
+            height: 36px !important;
+            transition: background-color 0.15s ease !important;
+        }
+        [data-testid="stChatInputSubmitButton"] button:hover {
+            background-color: #e11d48 !important;
+        }
+
+                /* Make sure all inner wrappers are white — but NOT the button */
+        [data-testid="stChatInput"] > div,
+        [data-testid="stChatInput"] > div > div {
+            background-color: #ffffff !important;
+        }
+
+        /* Only target non-button children */
+        [data-testid="stChatInput"] *:not(button):not(svg):not(path) {
+            background-color: #ffffff !important;
+        }
+
+        /* Restore button color explicitly after the wildcard */
+        [data-testid="stChatInputSubmitButton"] button {
+            background-color: #f43f5e !important;
+            border-radius: 9999px !important;
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+            width: 36px !important;
+            height: 36px !important;
+        }
+        [data-testid="stChatInputSubmitButton"] button:hover {
+            background-color: #e11d48 !important;
+        }
+        [data-testid="stChatInputSubmitButton"] button:focus {
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+        }
+        
+        
+
         @media (max-width: 768px) {
             [data-testid="stSidebar"] > div:first-child {
                 width: 180px !important;
@@ -1328,18 +1416,7 @@ def main():
     # Sidebar with progress (+ substeps on the active stage when applicable)
     with st.sidebar:
         st.title("Your journey")
-        current_idx = STAGES.index(st.session_state.stage)
-        for stage_key in STAGES[:-1]:
-            stage_idx = STAGES.index(stage_key)
-
-            if stage_idx < current_idx:
-                st.markdown(f"✅ {STAGE_LABELS[stage_key]}")
-            elif stage_idx == current_idx:
-                st.markdown(f"🔵 **{STAGE_LABELS[stage_key]}**")
-                _render_sidebar_substeps(stage_key)
-            else:
-                st.markdown(f"⚪ {STAGE_LABELS[stage_key]}")
-
+        render_sidebar_timeline()
         st.divider()
         if st.sidebar.button("Start Over"):
             st.session_state.clear()
