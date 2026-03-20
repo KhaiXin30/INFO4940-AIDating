@@ -987,9 +987,12 @@ def handle_proposition(user_input):
                     "role": "user",
                     "content": (
                         f"The user's message: {user_input}\n\n"
-                        "Revise only per their feedback. Follow the **system** instructions above for shape and length "
-                        "(opening + one list of 8–12 items, uniform depth, same closing question). "
-                        "Do not regenerate from scratch if they only asked for a small tweak — keep stable lines unchanged. "
+                        "CRITICAL: You must copy EVERY unchanged item word-for-word from your previous response. "
+                        "Only modify the specific item(s) the user mentioned. Do NOT rewrite, rephrase, reorder, "
+                        "or regenerate items the user did not ask to change. "
+                        "For example, if the user says 'I want someone who is a planner but also flexible', "
+                        "only update the item about structure/spontaneity — every other item must appear exactly as before. "
+                        "Keep the same shape (opening + one numbered list + same closing question). "
                         "Do NOT use [TRUST_RECOVERY:error1] unless there is genuine ambiguity or contradiction."
                     ),
                 },
@@ -1046,7 +1049,13 @@ def handle_proposition(user_input):
                     "role": "user",
                     "content": (
                         f"The user wants to adjust the deal breakers: {user_input}\n\n"
-                        "Re-present the deal breakers with their corrections applied, then end with the same kind "
+                        "CRITICAL: Distinguish between ADDING and REPLACING.\n"
+                        "- If the user asks to ADD a deal breaker, keep ALL existing deal breakers exactly as they are "
+                        "and append the new one.\n"
+                        "- If the user asks to REMOVE a deal breaker, remove only that one and keep the rest unchanged.\n"
+                        "- If the user asks to CHANGE a deal breaker, modify only that one and keep the rest word-for-word.\n"
+                        "Never drop an existing deal breaker to make room for a new one.\n\n"
+                        "Re-present the full list of deal breakers with their adjustments applied, then end with the same kind "
                         "of closing: ask them to confirm if these work, or to change anything."
                     ),
                 },
