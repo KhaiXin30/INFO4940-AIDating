@@ -20,6 +20,57 @@ STAGE_LABELS = {
     "complete": "Complete"
 }
 
+INTRO_ACKNOWLEDGMENT = (
+    "Great choice! Let's explore what makes a great connection for you. "
+    "First, I'll get to know you as a person."
+)
+
+
+def intro_acknowledgment_message(_relationship_description: str = "") -> str:
+    """Fixed intro line after the user describes what they're looking for."""
+    return INTRO_ACKNOWLEDGMENT
+
+
+def _render_sidebar_substeps(stage_key: str) -> None:
+    """Show finer-grained progress inside the current stage (sub-bullets only, no hint text)."""
+    ss = st.session_state
+
+    if stage_key == "about_you":
+        steps = [
+            ("questions", "Chat about you"),
+            ("confirm", "Confirm summary"),
+        ]
+        active_i = 1 if ss.get("awaiting_summary_confirmation") else 0
+    elif stage_key == "proposition":
+        steps = [
+            ("reflection", "What you're looking for"),
+            ("deal_breakers", "Deal breakers"),
+        ]
+        if not ss.get("trait_map_confirmed"):
+            active_i = 0
+        else:
+            active_i = 1
+    elif stage_key == "tension":
+        return
+    elif stage_key == "profile":
+        return
+    elif stage_key == "refinement":
+        steps = [
+            ("check_in", "Does it feel right?"),
+            ("tune", "Fine-tune (optional)"),
+        ]
+        active_i = 0 if ss.get("awaiting_initial_refinement") else 1
+    else:
+        return
+
+    for i, (_key, label) in enumerate(steps):
+        if i < active_i:
+            st.markdown(f"&nbsp;&nbsp;&nbsp;✅ *{label}*")
+        elif i == active_i:
+            st.markdown(f"&nbsp;&nbsp;&nbsp;**→ {label}**")
+        else:
+            st.markdown(f"&nbsp;&nbsp;&nbsp;○ {label}")
+
 # ===================================================================
 # TRUST RECOVERY SYSTEM
 # ===================================================================
@@ -91,7 +142,13 @@ any correction. Signal [TRUST_RECOVERY:error3] on its own line. The system will 
 revert to the last approved version and apply only the targeted edit.
 
 IMPORTANT: Only enter trust recovery when a genuine error or confusion has occurred. \
-Do not add the tag to every response — use it sparingly and purposefully.\
+Do not add the tag to every response — use it sparingly and purposefully.
+
+ADDITIONS vs CONTRADICTIONS (especially during the proposition reflection / deal breakers):
+  If the user simply adds a detail, hobby, or wish (e.g. wants someone to play a sport with them) \
+that fits what you already said, treat it as an ADD-ON: weave it in briefly. Do NOT use error1 \
+and do NOT re-litigate the whole portrait as if it were a conflict unless they explicitly \
+disagree with something you wrote. Reserve error1 for real ambiguity or a clear contradiction.\
 """
 
 
@@ -403,29 +460,6 @@ class TrustRecoverySystem:
 # Global trust recovery instance shared across all stages
 trust_recovery = TrustRecoverySystem()
 
-# ===============================
-# DIMENSION MENU
-# ===============================
-DIMENSION_MENU = """
-TIER 1 — UNIVERSAL (include for almost any relationship type):
-- Personality traits (e.g., warmth, humor, directness, patience)
-- Communication style (e.g., expressive vs. reserved, direct vs. diplomatic)
-- Core values (e.g., honesty, loyalty, ambition, kindness)
-- Deal breakers (behaviors or traits that are non-negotiable)
-
-TIER 2 — RELATIONAL (romantic partners, close friendships, mentors):
-- Emotional needs (e.g., emotional availability, reassurance, independence)
-- Attachment style (secure, anxious, avoidant tendencies)
-- Love languages (quality time, words of affirmation, acts of service, physical touch, gifts)
-- Conflict style (e.g., avoidant, confrontational, collaborative)
-
-TIER 3 — ACTIVITY / CONTEXT-SPECIFIC (sports partners, study buddies, cofounders):
-- Skill level and competitiveness
-- Scheduling and reliability
-- Work or play style (structured vs. improvisational)
-- Growth orientation (casual vs. always improving)
-"""
-
 # -------------------------------
 # SYSTEM PROMPTS
 # -------------------------------
@@ -465,69 +499,50 @@ def get_about_you_system_prompt(relationship_type=""):
     )
 
 
-def get_trait_map_system_prompt():
+def get_unified_proposition_system_prompt(relationship_type):
     return (
-        "You are a warm, insightful relationship coach. You have just learned a lot about "
-        "the user as a person. Your job RIGHT NOW is to show them a brief, readable summary of the personality "
-        "traits you picked up on.\n\n"
-        "Frame it warmly: 'Based on what you've shared, here's what I see in you...'\n"
-        "Map them along these dimensions (use plain language, not jargon):\n"
-        "   - Social energy (introvert <-> extravert)\n"
-        "   - Thinking style (concrete/practical <-> abstract/big-picture)\n"
-        "   - Decision-making (head-first <-> heart-first)\n"
-        "   - Structure (planner <-> spontaneous)\n"
-        "   - Openness (comfort-seeking <-> novelty-seeking)\n\n"
-        "Keep it to a short paragraph — not a list, not a quiz result. Make it feel like a friend "
-        "reflecting back what they've noticed.\n\n"
-        "End by asking: 'Does this feel right, or would you adjust anything?'\n\n"
+        "You are a warm, insightful relationship coach. You have a structured portrait of the user.\n\n"
+        f"They are looking for: {relationship_type}.\n\n"
+        "Your job is **one** assistant message that reflects how you read them **and** what seems to matter "
+        "for this kind of connection — as a **single** numbered list with **uniform depth**. "
+        "Do not give a short skim for some items and long paragraphs for others; every item should be similarly detailed.\n\n"
+        "OUTPUT FORMAT:\n"
+        "1) Opening: one sentence with this meaning (your wording): "
+        "\"Here are the main things I think you are looking for in this relationship.\" "
+        "Use \"this connection\" instead of \"relationship\" when it fits better (e.g. bandmate, study partner).\n"
+        "2) Blank line, then **one** numbered list only — no separate markdown bullet block, no second list, no extra headings.\n"
+        "   - **5-8 items** total.\n"
+        "   - Each item: a short **bold line or title**, then **2–4 sentences** grounded in what they said. "
+        "Use the same richness for every item.\n"
+        "   - The **first five items** must cover these dimensions (clear labels, your phrasing): "
+        "Social energy (introvert ↔ extravert); Thinking style (concrete ↔ abstract); "
+        "Decision-making (head ↔ heart); Structure (planner ↔ spontaneous); Openness (comfort ↔ novelty).\n"
+        "   - The **remaining items** are themes for *this* connection type (collaboration, logistics, creative fit, "
+        "pace, boundaries, etc.) — only what their answers support.\n"
+        "3) One line break, then ask exactly: \"Does this feel right, or would you adjust anything?\"\n\n"
         "STRICT RULES:\n"
-        "- Do NOT infer what the user needs in a partner or relationship yet — that comes next.\n"
-        "- Do NOT list categories, ranked items, or deal breakers.\n\n"
-        f"{TRUST_RECOVERY_INSTRUCTIONS}"
-    )
-
-def get_select_categories_prompt():
-    return (
-        "Based on the user's portrait and the relationship type they are looking for, "
-        "select 4-6 relevant dimension categories from this menu:\n\n"
-        f"{DIMENSION_MENU}\n"
-        "STRICT RULES:\n"
-        "- The categories you choose must make sense for the relationship type. Do NOT use love languages "
-        "for a squash partner. Do NOT use competitiveness for a romantic partner (unless it came up).\n"
-        "- Do NOT include 'Deal breakers' as a category — those are handled separately.\n"
-        "- Output ONLY a valid JSON array of category name strings, nothing else.\n"
-        '  Example: ["Personality Traits", "Communication Style", "Core Values", "Emotional Needs"]'
-    )
-
-def get_category_system_prompt(relationship_type, category_name):
-    return (
-        "You are a warm, insightful relationship coach presenting ONE specific dimension "
-        f"category for the user's {relationship_type}.\n\n"
-        "You have already shown the user their trait map (confirmed below). Now present the category "
-        f'"{category_name}" with 2-4 ranked items. For each item, give a ONE-LINE explanation of why you '
-        "placed it there, tied to what you know about the user.\n\n"
-        "Use personality frameworks (MBTI, Enneagram, PERSOC, DiSC, etc.) where relevant. Briefly name "
-        "which framework(s) informed each ranking.\n\n"
-        "Format as a clear numbered list under the category heading.\n\n"
-        'End by asking: "Does this ordering feel right, or would you adjust anything?"\n\n'
-        "STRICT RULES:\n"
-        "- Present ONLY this one category. Do NOT show other categories or deal breakers.\n"
-        "- Frame everything as inference, not prescription: 'I think...' / 'Based on who you are...' "
-        "not 'You need...' / 'You should look for...'\n"
-        "- NEVER give examples when asking for feedback. Let the user tell you what to change.\n\n"
+        "- Describe how they show up and what would fit them; save blunt non‑negotiables for the separate deal-breakers step.\n"
+        "- Frame as inference (\"I hear…\", \"Based on what you shared…\") — not \"You need…\".\n"
+        "- Do NOT list deal breakers here.\n"
+        "- If revising after user feedback, keep the same shape (opening + one numbered list + same closing question); "
+        "only change what their message affects. Do NOT use [TRUST_RECOVERY:error1] for simple add-ons.\n\n"
         f"{TRUST_RECOVERY_INSTRUCTIONS}"
     )
 
 def get_deal_breakers_system_prompt(relationship_type):
     return (
         "You are a warm, insightful relationship coach. Based on everything you know "
-        "about the user — their trait map, confirmed priorities, and the conversation so far — infer "
+        "about the user — their confirmed reflection on what they're looking for and the conversation so far — infer "
         f"2-4 deal breakers for their {relationship_type}.\n\n"
         "These should be behaviors or traits that are non-negotiable given who this person is. Frame them "
         "as what would be genuinely incompatible with the user's personality and needs.\n\n"
-        'End by asking: "Are these the right deal breakers, or would you add, remove, or change any?"\n\n'
+        "OUTPUT — After listing the deal breakers, you MUST end with a single short closing paragraph or line that:\n"
+        "- Invites them to **confirm** if these deal breakers feel right, AND\n"
+        "- Makes clear they can **change** anything (add, remove, or revise).\n"
+        "Example (paraphrase in your own voice): \"Let me know if you're happy to go with these, or if you'd like "
+        "to change anything.\" Do not skip this closing — the user needs an explicit confirm-or-change prompt.\n\n"
         "STRICT RULES:\n"
-        "- Present ONLY deal breakers. Do NOT repeat the trait map or dimension categories.\n"
+        "- Present ONLY deal breakers (then the closing question). Do NOT repeat the long numbered reflection list.\n"
         "- Keep each deal breaker to one concise line.\n"
         '- Frame as inference: "Based on who you are, I think these would be real problems..."\n\n'
         f"{TRUST_RECOVERY_INSTRUCTIONS}"
@@ -552,7 +567,6 @@ PROFILE_SYSTEM_PROMPT = (
     "SECTION SELECTION — Choose the sections that make sense for this relationship type. "
     "Here are your options (pick 5-8):\n\n"
     "FOR ANY RELATIONSHIP TYPE:\n"
-    "- Name & Age\n"
     "- Personality & Core Traits\n"
     "- Communication Style\n"
     "- A Typical Interaction (what spending time together looks like)\n"
@@ -569,6 +583,11 @@ PROFILE_SYSTEM_PROMPT = (
     "- Scheduling & Reliability\n"
     "- Growth Orientation\n\n"
     "STRICT RULES:\n"
+    "- The **very first line** of the profile (before any section headers) must be exactly this pattern: "
+    "**Meet [FirstName].** — invent one plausible first name at random (vary style/culture). Add age in there too"
+    "If the user already gave a name in their ideas, use that first name instead. "
+    "Do not use the user's own name or a famous real person's name unless they asked.\n"
+    "- After that opening line, add a blank line, then use clear headers for each section (you may still "
     "- Write in warm, engaging prose. Use a clear header for each section.\n"
     "- Never show JSON to the user.\n"
     "- The top-ranked priorities from the proposition should come through clearly in the profile.\n"
@@ -582,6 +601,7 @@ PROFILE_SYSTEM_PROMPT = (
 REFINEMENT_SYSTEM_PROMPT = (
     "You are helping the user refine a {relationship_type} profile through natural conversation. "
     "When the user gives feedback, update the profile and reprint it in full — same warm prose format, no JSON. "
+    "Keep the opening line **Meet [FirstName].** as the first line unless the user explicitly asks to rename them. "
     "React naturally as a collaborator: acknowledge what changed, and notice what else might be worth exploring. "
     "When the user is done, close warmly. "
     "Never include anything the user has flagged as a deal breaker.\n\n"
@@ -615,8 +635,10 @@ USER_PORTRAIT_EXTRACTION_PROMPT = (
 
 PROPOSITION_EXTRACTION_PROMPT = (
     "Based on the proposition conversation, extract the final agreed-upon priorities "
-    "into JSON format. The categories should reflect what was actually discussed — "
-    "they will vary based on the relationship type. "
+    "into JSON format. The user confirmed one detailed numbered reflection (dimensions + connection themes) "
+    "— represent that as one object in selected_dimensions "
+    'with category \"Main reflection\" (or similar) and ranked_items in order (one entry per numbered item). '
+    "Deal breakers are separate. "
     "Output ONLY valid JSON.\n"
     "{{\n"
     '  "relationship_type": "{relationship_type}",\n'
@@ -662,6 +684,51 @@ def call_llm(messages, temperature=0.7, max_tokens=24000):
 # -------------------------------
 # HELPER FUNCTIONS
 # -------------------------------
+
+# If user says "yes, these are right" we should confirm — not only exact "yes".
+_CONFIRMATION_EXACT = frozenset({
+    "yes", "yeah", "yep", "yup", "looks good", "that's right", "that is right",
+    "correct", "good", "perfect", "spot on", "exactly", "sure", "ok", "okay",
+    "that's it", "all good", "looks right", "looks great", "no changes", "fine",
+    "done", "agreed", "sounds good", "works for me", "nothing to add",
+    "feels good", "feel good", "feels great", "feels right", "that's great",
+    "love it", "love this", "nailed it",
+})
+_CONFIRMATION_PHRASES = (
+    "that's right", "that is right", "these are right", "this is right",
+    "looks good", "sounds good", "works for me", "all good", "spot on",
+    "no changes", "nothing to change", "happy with", "good with these",
+    "i agree", "sounds right", "they're right", "they are right",
+    "feels good", "feels right", "feels great", "sounds great",
+)
+# If message starts with yes but asks for edits, do not treat as pure confirmation.
+_CONFIRMATION_NEGATORS = (
+    " but ", " except ", " change", " remove", " add ", " wrong", " not quite",
+    " actually", " instead", " don't want", " drop ", " replace", " edit ",
+    " tweak", " adjust", " delete",
+)
+
+
+def user_signals_confirmation(user_input: str) -> bool:
+    """True when the user is accepting / confirming, including 'yes, these are right'."""
+    t = (user_input or "").lower().strip()
+    if not t:
+        return False
+    if t in _CONFIRMATION_EXACT:
+        return True
+    if any(p in t for p in _CONFIRMATION_PHRASES):
+        if any(n in t for n in _CONFIRMATION_NEGATORS):
+            return False
+        return True
+    first_token = t.split(maxsplit=1)[0] if t else ""
+    first_clean = first_token.strip(".,!?;:\"'")
+    if first_clean in {"yes", "yeah", "yep", "yup", "correct", "perfect", "sure", "ok", "okay", "right", "fine"}:
+        if any(n in t for n in _CONFIRMATION_NEGATORS):
+            return False
+        return True
+    return False
+
+
 def extract_user_portrait(conversation_messages):
     conversation_text = "\n".join([
         f"{msg['role'].upper()}: {msg['content']}"
@@ -829,16 +896,13 @@ def handle_summary_confirmation(user_input):
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.session_state.awaiting_summary_confirmation = False
 
-    acceptance_keywords = {"yes", "yeah", "yep", "looks good", "that's right", "correct", "good", "perfect", "spot on", "exactly", "sure", "ok", "okay", "that's it", "nothing to add", "all good", "looks right"}
-
-    if user_input.lower().strip() in acceptance_keywords or user_input.lower().strip() == "":
-        st.session_state.messages.append({"role": "assistant", "content": "Great! Now let me analyze what we've discussed."})
-    else:
+    if not user_signals_confirmation(user_input) and user_input.lower().strip() != "":
         st.session_state.stage_messages.append({"role": "assistant", "content": st.session_state.stage_messages[-2]["content"]})
         st.session_state.stage_messages.append({"role": "user", "content": user_input})
         st.session_state.messages.append({"role": "assistant", "content": "Got it — thanks for the clarification. I'll make sure that's reflected."})
+    # On confirm: no filler assistant line — trait map supplies the next message and its own intro.
 
-    with st.spinner("Analyzing your responses..."):
+    with st.spinner("Analyzing your response..."):
         st.session_state.user_portrait = extract_user_portrait(st.session_state.stage_messages)
     advance_stage()
     start_proposition_stage()
@@ -849,12 +913,12 @@ def start_proposition_stage():
         f"Here is the structured portrait of who they are:\n"
         f"{json.dumps(st.session_state.user_portrait, indent=2)}"
     )
-    system_msg = {"role": "system", "content": get_trait_map_system_prompt()}
+    system_msg = {
+        "role": "system",
+        "content": get_unified_proposition_system_prompt(st.session_state.relationship_type),
+    }
     user_context = {"role": "user", "content": user_context_text}
     st.session_state.stage_messages = [system_msg, user_context]
-
-    transition_msg = "Based on what I've learned about you, let me reflect back what I see..."
-    st.session_state.messages.append({"role": "assistant", "content": transition_msg})
 
     st.session_state.trait_map_confirmed = False
     st.session_state.proposition_categories = []
@@ -862,8 +926,8 @@ def start_proposition_stage():
     st.session_state.awaiting_deal_breakers = False
     st.session_state.deal_breakers_confirmed = False
 
-    with st.spinner("Reflecting on who you are..."):
-        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
+    with st.spinner("Reflecting on what you're looking for..."):
+        ai_response = call_llm(st.session_state.stage_messages, max_tokens=4000)
 
     if ai_response:
         st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
@@ -894,147 +958,75 @@ def handle_proposition(user_input):
     )
 
     if not st.session_state.trait_map_confirmed:
-        # User just reacted to the trait map — check if confirming or giving feedback
-        acceptance_keywords = {
-            "yes", "yeah", "yep", "looks good", "that's right", "correct", "good",
-            "perfect", "spot on", "exactly", "sure", "ok", "okay", "that's it",
-            "all good", "looks right", "looks great", "no changes", "fine", "done"
-        }
-        user_is_confirming = user_input.lower().strip() in acceptance_keywords
+        # User is reacting to the unified reflection (one detailed list) — confirm or revise
+        user_is_confirming = user_signals_confirmation(user_input)
 
         if not user_is_confirming:
-            # User gave feedback on the trait map — re-generate it with their correction
-            confirmed_text = _get_proposition_conversation_text()
             trait_messages = [
-                {"role": "system", "content": get_trait_map_system_prompt()},
+                {
+                    "role": "system",
+                    "content": get_unified_proposition_system_prompt(st.session_state.relationship_type),
+                },
                 {"role": "user", "content": user_context_text},
-                {"role": "assistant", "content": st.session_state.stage_messages[-2]["content"] if len(st.session_state.stage_messages) >= 2 else ""},
-                {"role": "user", "content": f"The user wants to adjust the trait map: {user_input}\n\nPlease re-present the trait map with the user's corrections applied."}
+                {
+                    "role": "assistant",
+                    "content": (
+                        st.session_state.stage_messages[-2]["content"]
+                        if len(st.session_state.stage_messages) >= 2
+                        else ""
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"The user's message: {user_input}\n\n"
+                        "Revise only per their feedback. Follow the **system** instructions above for shape and length "
+                        "(opening + one list of 8–12 items, uniform depth, same closing question). "
+                        "Do not regenerate from scratch if they only asked for a small tweak — keep stable lines unchanged. "
+                        "Do NOT use [TRUST_RECOVERY:error1] unless there is genuine ambiguity or contradiction."
+                    ),
+                },
             ]
 
-            with st.spinner("Updating trait map..."):
-                ai_response = call_llm(trait_messages, max_tokens=3000)
+            with st.spinner("Updating reflection..."):
+                ai_response = call_llm(trait_messages, max_tokens=4000)
 
             if ai_response:
                 st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
                 ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
                 st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
                 st.session_state.messages.append({"role": "assistant", "content": ai_response})
-            # Stay in trait_map_confirmed = False so user can confirm or give more feedback
         else:
-            # User confirmed trait map — select categories and show first one
-            with st.spinner("Selecting what matters most..."):
-                # Select categories (no user interaction)
-                select_messages = [
-                    {"role": "system", "content": get_select_categories_prompt()},
-                    {"role": "user", "content": user_context_text}
-                ]
-                category_response = call_llm(select_messages, temperature=0.1, max_tokens=3000)
-
-                try:
-                    json_start = category_response.find("[")
-                    json_end = category_response.rfind("]") + 1
-                    st.session_state.proposition_categories = json.loads(category_response[json_start:json_end])
-                except Exception:
-                    st.session_state.proposition_categories = ["Personality Traits", "Communication Style", "Core Values", "Emotional Needs"]
-
-                transition = "Now let me walk you through what I think matters most, one area at a time."
-                st.session_state.messages.append({"role": "assistant", "content": transition})
-
-                # Generate first category
-                category_name = st.session_state.proposition_categories[0]
-                confirmed_text = _get_proposition_conversation_text()
-                cat_messages = [
-                    {"role": "system", "content": get_category_system_prompt(st.session_state.relationship_type, category_name)},
-                    {"role": "user", "content": f"{user_context_text}\n\nConfirmed trait map conversation so far:\n{confirmed_text}"}
-                ]
-                ai_response = call_llm(cat_messages, max_tokens=3000)
-
-            if ai_response:
-                st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
-                ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
-                st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-                st.session_state.messages.append({"role": "assistant", "content": ai_response})
-
+            # User confirmed the unified list — go straight to deal breakers (no second list)
             st.session_state.trait_map_confirmed = True
+            st.session_state.proposition_categories = []
             st.session_state.current_category_index = 0
 
-    elif st.session_state.current_category_index < len(st.session_state.proposition_categories):
-        # User just reacted to a category — check if confirming or giving feedback
-        acceptance_keywords = {
-            "yes", "yeah", "yep", "looks good", "that's right", "correct", "good",
-            "perfect", "spot on", "exactly", "sure", "ok", "okay", "that's it",
-            "all good", "looks right", "looks great", "no changes", "fine", "done"
-        }
-        user_is_confirming = user_input.lower().strip() in acceptance_keywords
-
-        if not user_is_confirming:
-            # User gave feedback — re-generate the SAME category with their correction
-            category_name = st.session_state.proposition_categories[st.session_state.current_category_index]
             confirmed_text = _get_proposition_conversation_text()
-            cat_messages = [
-                {"role": "system", "content": get_category_system_prompt(st.session_state.relationship_type, category_name)},
-                {"role": "user", "content": f"{user_context_text}\n\nConversation so far:\n{confirmed_text}"},
-                {"role": "assistant", "content": st.session_state.stage_messages[-2]["content"] if len(st.session_state.stage_messages) >= 2 else ""},
-                {"role": "user", "content": f"The user wants to adjust this ranking: {user_input}\n\nPlease re-present this category with the user's corrections applied."}
+            db_messages = [
+                {"role": "system", "content": get_deal_breakers_system_prompt(st.session_state.relationship_type)},
+                {
+                    "role": "user",
+                    "content": (
+                        f"{user_context_text}\n\nFull confirmed conversation so far:\n{confirmed_text}"
+                    ),
+                },
             ]
 
-            with st.spinner("Updating ranking..."):
-                ai_response = call_llm(cat_messages, max_tokens=3000)
+            with st.spinner("Great! Now I'm thinking about your potential deal breakers..."):
+                ai_response = call_llm(db_messages, max_tokens=3000)
 
             if ai_response:
                 st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
                 ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
                 st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
                 st.session_state.messages.append({"role": "assistant", "content": ai_response})
-        else:
-            # User confirmed — advance to next category or deal breakers
-            st.session_state.current_category_index += 1
 
-            if st.session_state.current_category_index < len(st.session_state.proposition_categories):
-                # More categories to show
-                category_name = st.session_state.proposition_categories[st.session_state.current_category_index]
-                confirmed_text = _get_proposition_conversation_text()
-                cat_messages = [
-                    {"role": "system", "content": get_category_system_prompt(st.session_state.relationship_type, category_name)},
-                    {"role": "user", "content": f"{user_context_text}\n\nConfirmed conversation so far:\n{confirmed_text}"}
-                ]
-
-                with st.spinner("Thinking..."):
-                    ai_response = call_llm(cat_messages, max_tokens=3000)
-
-                if ai_response:
-                    st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
-                    ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
-                    st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
-            else:
-                # All categories done — show deal breakers
-                confirmed_text = _get_proposition_conversation_text()
-                db_messages = [
-                    {"role": "system", "content": get_deal_breakers_system_prompt(st.session_state.relationship_type)},
-                    {"role": "user", "content": f"{user_context_text}\n\nFull confirmed conversation so far:\n{confirmed_text}"}
-                ]
-
-                with st.spinner("Thinking about deal breakers..."):
-                    ai_response = call_llm(db_messages, max_tokens=3000)
-
-                if ai_response:
-                    st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
-                    ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
-                    st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
-
-                st.session_state.awaiting_deal_breakers = True
+            st.session_state.awaiting_deal_breakers = True
 
     elif st.session_state.awaiting_deal_breakers:
         # User just reacted to deal breakers — check if confirming or giving feedback
-        acceptance_keywords = {
-            "yes", "yeah", "yep", "looks good", "that's right", "correct", "good",
-            "perfect", "spot on", "exactly", "sure", "ok", "okay", "that's it",
-            "all good", "looks right", "looks great", "no changes", "fine", "done"
-        }
-        user_is_confirming = user_input.lower().strip() in acceptance_keywords
+        user_is_confirming = user_signals_confirmation(user_input)
 
         if not user_is_confirming:
             # User gave feedback on deal breakers — re-generate with their correction
@@ -1043,7 +1035,14 @@ def handle_proposition(user_input):
                 {"role": "system", "content": get_deal_breakers_system_prompt(st.session_state.relationship_type)},
                 {"role": "user", "content": f"{user_context_text}\n\nFull confirmed conversation so far:\n{confirmed_text}"},
                 {"role": "assistant", "content": st.session_state.stage_messages[-2]["content"] if len(st.session_state.stage_messages) >= 2 else ""},
-                {"role": "user", "content": f"The user wants to adjust the deal breakers: {user_input}\n\nPlease re-present the deal breakers with the user's corrections applied."}
+                {
+                    "role": "user",
+                    "content": (
+                        f"The user wants to adjust the deal breakers: {user_input}\n\n"
+                        "Re-present the deal breakers with their corrections applied, then end with the same kind "
+                        "of closing: ask them to confirm if these work, or to change anything."
+                    ),
+                },
             ]
 
             with st.spinner("Updating deal breakers..."):
@@ -1131,7 +1130,7 @@ def start_profile_stage():
     st.session_state.awaiting_profile_ideas = True
 
 def start_refinement_stage():
-    prompt = "Does this feel right to you, or is something off?\n\n(Type **done** when you're happy with it.)"
+    prompt = "Does this feel right to you, or is something off?\n\n(Type **done** or **yes** when you're happy with it.)"
     st.session_state.messages.append({"role": "assistant", "content": prompt})
     st.session_state.awaiting_initial_refinement = True
 
@@ -1145,7 +1144,10 @@ def start_refinement_stage():
 def handle_refinement(user_input):
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    if user_input.lower() in {"done", "exit", "quit", "finished", "that's it", "looks good"}:
+    # Treat confirmation phrases like "yes" / "looks good" / "that's right" as done — same as "done".
+    # Keep exit / quit / finished for users who type those explicitly.
+    t = (user_input or "").lower().strip()
+    if user_signals_confirmation(user_input) or t in {"exit", "quit", "finished"}:
         final_msg = "Wonderful! I hope this profile gives you a clear sense of what you're looking for. Good luck — you deserve someone great."
         st.session_state.messages.append({"role": "assistant", "content": final_msg})
         advance_stage()
@@ -1263,17 +1265,18 @@ def main():
 
     init_session_state()
 
-    # Sidebar with progress
+    # Sidebar with progress (+ substeps on the active stage when applicable)
     with st.sidebar:
-        st.title("Progress")
+        st.title("Your journey")
+        current_idx = STAGES.index(st.session_state.stage)
         for stage_key in STAGES[:-1]:
-            current_idx = STAGES.index(st.session_state.stage)
             stage_idx = STAGES.index(stage_key)
 
             if stage_idx < current_idx:
                 st.markdown(f"✅ {STAGE_LABELS[stage_key]}")
             elif stage_idx == current_idx:
                 st.markdown(f"🔵 **{STAGE_LABELS[stage_key]}**")
+                _render_sidebar_substeps(stage_key)
             else:
                 st.markdown(f"⚪ {STAGE_LABELS[stage_key]}")
 
@@ -1319,7 +1322,7 @@ def main():
             with st.chat_message("user"):
                 st.markdown(user_input)
             with st.spinner("Thinking..."):
-                response = f"Great choice! Let's explore what makes a great {user_input.lower() if user_input else 'connection'} for you. First, I'll get to know you as a person."
+                response = intro_acknowledgment_message(user_input)
                 st.session_state.messages.append({"role": "assistant", "content": response})
                 advance_stage()
                 system_msg = {"role": "system", "content": get_about_you_system_prompt(st.session_state.relationship_type)}
@@ -1399,6 +1402,8 @@ def main():
                     "content": (
                         f"Generate a complete profile based on these confirmed priorities: "
                         f"{json.dumps(st.session_state.proposition_data, indent=2)}.\n"
+                        "Start with one line only: Meet [FirstName], a [Age] year old [Gender]. (invent a plausible first name and age). "
+                        "Then a blank line, then the section headers and body. "
                         f"Select appropriate sections for this relationship type. "
                         f"End with a 'Why This Person Fits You' section. "
                         f"Reflect the ranked priorities and exclude all deal breakers."
