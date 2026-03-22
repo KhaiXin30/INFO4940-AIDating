@@ -1,10 +1,81 @@
-import streamlit as st
+import re
 import json
+import streamlit as st
+import streamlit.components.v1 as components
 
 # -------------------------------
 # CONFIG
 # -------------------------------
 MODEL_PATH = "llama-3.1-8b.gguf"
+TEST_MODE = True  # Set to False to use the real model
+
+# 24 mock LLM responses covering the full happy path + trust recovery.
+# Ordered to match the call sequence:
+#   R0-R4:  about_you questions (4 Qs + SUMMARY)
+#   R5:     extract_user_portrait JSON (hidden)
+#   R6-R7:  proposition trait map (first pass + revised after user tweak)
+#   R8:     deal breakers
+#   R9:     extract_proposition JSON (hidden)
+#   R10-R12: tension clarifying questions
+#   R13:    tension wrap-up
+#   R14:    profile generation
+#   R15-R16: refinement updates
+#   R17-R18: _llm_classify_confirmation fallbacks ("CONFIRM")
+#   R19:    error1 recovery — corrected model summary
+#   R20:    error2 recovery — assumption audit opener
+#   R21:    error2 recovery — corrected profile
+#   R22:    error3 recovery — reverted + targeted edit
+#   R23:    final refinement update
+_TEST_LLM_RESPONSES = [
+    # R0 — about_you Q1: personality
+    "What's something you genuinely enjoy that you think says a lot about who you are as a person?",
+    # R1 — about_you Q2: lifestyle
+    "When you have a free afternoon with no plans or obligations, how do you usually end up spending it?",
+    # R2 — about_you Q3: how you show up in relationships
+    "How would someone who knows you really well describe the way you show up in close relationships?",
+    # R3 — about_you Q4: what you're looking for in a partner
+    "What kind of person do you imagine being most at ease with — in terms of their energy, pace, and how they move through the world?",
+    # R4 — about_you SUMMARY: triggers end of stage and summary confirmation
+    "SUMMARY: You are a thoughtful, introspective person who values depth and genuine connection. You gravitate toward meaningful conversations and quiet, intentional ways of spending time. In relationships, you show up as the steady, caring presence — the one who listens deeply and remembers the small things. You tend to do best with someone whose energy is warm and grounded, someone who takes their time with people and doesn't need to fill every silence.",
+    # R5 — extract_user_portrait JSON (never shown to user)
+    '{"personality_traits": ["thoughtful", "introspective", "empathetic", "steady"], "communication_style": "Listens carefully, speaks with intention — quiet but deeply engaged", "values": ["authenticity", "depth", "loyalty", "growth"], "lifestyle": "Enjoys meaningful conversations, reading, time in nature, intentional downtime", "social_energy": "Introverted — recharges alone, values small close connections over large social groups", "thinking_style": "Reflective and intuitive, drawn to meaning and pattern", "decision_making": "Empathy-first — considers emotional impact before logic", "structure_vs_spontaneity": "Prefers structure and predictability, open to flexibility within that", "openness_to_experience": "Curious but measured — eases into novelty at their own pace", "relationship_tendencies": "Loyal, caring, shows love through attentiveness and consistency", "big_five_estimates": {"extraversion": "low", "openness": "medium-high", "agreeableness": "high", "conscientiousness": "medium-high", "neuroticism": "low-medium"}}',
+    # R6 — proposition trait map first pass
+    "Based on everything you've shared, here's what I see in you and what I think you'd need most in a connection:\n\n1. **Social energy** — You recharge alone and do best in small, close relationships. Someone who matches this quieter energy would feel like a relief, not a compromise.\n2. **Thinking style** — You're drawn to depth and meaning. Surface-level small talk drains you; a partner who can go deep on ideas and feelings is essential.\n3. **Decision-making** — You lead with how things feel before you reach for logic. You'd need someone emotionally present enough to meet you there.\n4. **Structure** — You like having a plan. A partner who respects that rhythm — rather than constantly pulling you into chaos — will let you thrive.\n5. **Openness** — You're genuinely curious but move at your own pace. You'd do well with someone who introduces new things gently, not forcefully.\n6. **Connection through loyalty** — You love through consistency and small, remembered details. Someone who shows up the same way every time is more meaningful to you than grand gestures.\n\nDoes this feel right, or would you adjust anything?",
+    # R7 — proposition revised trait map (after user feedback)
+    "Got it — here's the updated reflection:\n\n1. **Social energy** — You recharge alone and do best in small, close relationships. Someone who matches this quieter energy would feel like a relief, not a compromise.\n2. **Thinking style** — You're drawn to depth and meaning. Surface-level small talk drains you; a partner who can go deep on ideas and feelings is essential.\n3. **Decision-making** — You lead with how things feel before you reach for logic. You'd need someone emotionally present enough to meet you there.\n4. **Structure** — You like having a plan. A partner who respects that rhythm — rather than constantly pulling you into chaos — will let you thrive.\n5. **Openness** — You're genuinely curious but move at your own pace. You'd do well with someone who introduces new things gently, not forcefully.\n6. **Connection through presence** — You love through undivided attention and small, consistent moments. Someone who is truly there — not distracted or half-present — matters more to you than elaborate gestures.\n\nDoes this feel right now?",
+    # R8 — deal breakers
+    "Based on who you are, I think these would be genuine deal breakers for you:\n\n1. **Emotional unavailability** — You lead with empathy and need that reciprocated. Someone who shuts down or goes cold would leave you feeling invisible.\n2. **Dismissiveness** — You think carefully before you speak. A partner who brushes off what you share would erode trust quickly.\n3. **Constant unpredictability** — You're not rigid, but you need a stable foundation. Someone who creates ongoing chaos would exhaust and unsettle you.\n\nLet me know if these feel right, or if you'd like to add, remove, or change anything.",
+    # R9 — extract_proposition JSON (never shown to user)
+    '{"relationship_type": "romantic partner", "user_trait_summary": "Thoughtful, empathetic, introverted. Values depth and loyalty. Leads with emotion, prefers structure, curious but measured. Shows love through presence and consistency.", "selected_dimensions": [{"category": "Main reflection", "ranked_items": [{"item": "Social energy — quiet, close connections over large circles", "reasoning": "User is introverted and recharges alone"}, {"item": "Thinking style — depth and meaning over surface talk", "reasoning": "User drawn to reflective, meaningful conversation"}, {"item": "Decision-making — emotion-first", "reasoning": "User leads with empathy before logic"}, {"item": "Structure — respects planning and rhythm", "reasoning": "User prefers predictability with flexibility"}, {"item": "Openness — curious but measured pace", "reasoning": "User eases into novelty"}, {"item": "Connection through presence and consistency", "reasoning": "User values undivided attention and small consistent moments"}]}], "deal_breakers": ["Emotional unavailability", "Dismissiveness", "Constant unpredictability"]}',
+    # R10 — tension Q1
+    "I noticed something worth exploring — you value both emotional depth and structure, but deep emotional connection can sometimes be unpredictable and messy. How do you hold those two things together — does emotional depth feel worth the instability it sometimes brings, or do you need a relationship that stays fairly even-keeled?",
+    # R11 — tension Q2
+    "That makes a lot of sense. You also described yourself as someone who eases into new things at your own pace — but growth in a relationship often means being pushed a little outside your comfort zone. How much do you want a partner who challenges you versus one who simply supports where you already are?",
+    # R12 — tension Q3
+    "One last thing — you mentioned showing love through consistency and small remembered details, but also valuing someone who can go emotionally deep. Do you need your partner to express things verbally, or is it enough if they show up consistently even if they're not naturally expressive with words?",
+    # R13 — tension wrap-up (after user answers Q3)
+    "That's a really clear picture — you want emotional depth and consistency to coexist, and you'd rather be challenged gently from within a stable foundation than pulled into constant change. That all fits together well.",
+    # R14 — profile generation
+    "**Meet Soren, a 31 year old man.**\n\n### Personality & Core Traits\nSoren is the kind of person who actually listens — not politely, but with the kind of attention that makes you feel like the most important person in the room. He's unhurried and deliberate, someone who thinks before he speaks and means what he says. He has a dry, quiet sense of humor that surfaces when you least expect it. He's not trying to impress anyone; he's just genuinely himself.\n\n### Communication Style\nSoren doesn't fill silence for the sake of it. He'll sit with you in a quiet moment without reaching for his phone. When he does speak, it tends to be worth hearing — considered, specific, and warm. He's honest without being blunt, and he knows how to name what he's feeling without making it dramatic.\n\n### Emotional Style & Love Languages\nHis primary love language is quality time — undistracted, unhurried presence. He also notices the small things: he'll remember what you said you were anxious about last week and ask how it went. He's not performative with affection, but the consistency of it is unmistakable.\n\n### A Typical Day in His Life\nSoren starts his mornings slowly — coffee, reading, thirty minutes without a screen. He works in landscape architecture and spends his afternoons between a desk and project sites. His evenings are quiet: cooking something from scratch, a long walk, or a film he actually wants to talk about afterward.\n\n### Conflict Style\nHe doesn't avoid hard conversations, but he doesn't rush into them either. He takes a breath, waits until he can speak from understanding rather than reaction, and leads with curiosity — what happened, what did you need, what can we do differently.\n\n### Backstory\nSoren grew up in a mid-sized city, the eldest of three. He was close to his mother, who was a high school art teacher, and learned early that paying attention to people was its own kind of love. He had one long relationship in his late twenties that ended amicably when they realized they wanted different versions of the future.\n\n### Why This Person Fits You\nSoren offers exactly the combination you described: emotional depth within a stable, consistent presence. He won't overwhelm you with intensity, but he won't give you surface level either. His pace matches yours — unhurried, intentional, showing up the same way every time.",
+    # R15 — refinement update 1
+    "**Meet Soren, a 31 year old man.**\n\n### Personality & Core Traits\nSoren is the kind of person who actually listens — not politely, but with the kind of attention that makes you feel like the most important person in the room. He's unhurried and deliberate, someone who thinks before he speaks and means what he says. He has a dry, quiet sense of humor that surfaces when you least expect it.\n\n### Communication Style\nSoren doesn't fill silence for the sake of it. When he does speak, it tends to be worth hearing — considered, specific, and warm.\n\n### Emotional Style & Love Languages\nHis primary love language is quality time — undistracted, unhurried presence. He notices the small things and shows up the same way every time.\n\n### A Typical Day in His Life\nSoren starts his mornings with a long run before the city wakes up, then coffee and reading. He works in landscape architecture. His evenings are quiet: cooking something from scratch, a long walk, or a film he actually wants to talk about afterward. On weekends you'd find him at the climbing gym or on a trail he hasn't tried yet.\n\n### Conflict Style\nHe doesn't avoid hard conversations. He takes a breath, waits until he can speak from understanding rather than reaction, and leads with curiosity.\n\n### Backstory\nSoren grew up in a mid-sized city, the eldest of three, close to his mother who was a high school art teacher.\n\n### Why This Person Fits You\nSoren offers emotional depth within a stable, consistent presence. His active lifestyle adds energy without pressure to change.\n\n*Updated: Added outdoor and climbing interests to A Typical Day. You might also consider personalizing his career or adding a small quirk.*",
+    # R16 — refinement update 2
+    "**Meet Soren, a 31 year old man.**\n\n### Personality & Core Traits\nSoren is the kind of person who actually listens — not politely, but with genuine attention. He collects vintage maps — not seriously, just the ones that catch his eye at markets — and has an inexplicable loyalty to a single brand of terrible instant coffee that he drinks completely unironically.\n\n### Communication Style\nSoren doesn't fill silence for the sake of it. When he speaks, it's worth hearing — considered, specific, and warm.\n\n### Emotional Style & Love Languages\nHis primary love language is quality time — undistracted, unhurried presence. He notices the small things.\n\n### A Typical Day in His Life\nMornings start with a run, then coffee and reading. Evenings are quiet: cooking, a long walk, or a film he wants to talk about afterward.\n\n### Conflict Style\nHe takes a breath before responding, leads with curiosity, and believes conflict handled well can bring people closer.\n\n### Backstory\nGrew up in a mid-sized city, eldest of three, close to his art-teacher mother.\n\n### Why This Person Fits You\nSoren offers exactly the depth and consistency you need. The quirks make him feel real rather than ideal.\n\n*Updated: Added the map collection and instant coffee detail. No further changes suggested — this feels like a solid final version.*",
+    # R17 — _llm_classify_confirmation fallback
+    "CONFIRM",
+    # R18 — _llm_classify_confirmation fallback
+    "CONFIRM",
+    # R19 — error1 recovery: corrected model summary
+    "To make sure we are aligned — you're looking for someone who is emotionally present and warm, but you've clarified that you don't need constant verbal affirmation; consistent actions and attentiveness matter more to you than expressive words.",
+    # R20 — error2 recovery: assumption audit opener
+    "I want to walk back through a few things I included in the profile to make sure they all come from what you actually told me, rather than assumptions I made. Let me go through them one by one.",
+    # R21 — error2 recovery: corrected profile
+    "I've updated the profile based on your corrections — removing the inferred details and keeping only what you confirmed.\n\n**Meet Soren, a 31 year old man.**\n\nSoren is thoughtful, unhurried, and genuinely present. He listens in a way that makes people feel heard. He's consistent — someone who shows up the same way each time, without drama or performance. The rest of his profile has been revised to reflect only what you confirmed, with the assumptions removed.",
+    # R22 — error3 recovery: reverted and targeted edit applied
+    "I overstepped — I changed more than you asked. I've reverted to the previous version and applied only the one change you requested.\n\n**Meet Soren, a 31 year old man.**\n\nEverything is as it was, with only the specific detail you asked to change updated. Let me know if anything else feels off.",
+    # R23 — final refinement update
+    "**Meet Soren, a 31 year old man.**\n\nThe profile is updated with your final note. I think this version feels complete — specific enough to feel real, and grounded in everything you shared.\n\n*No further changes suggested — this feels like a solid final version.*",
+]
 
 # -------------------------------
 # STAGE DEFINITIONS
@@ -192,7 +263,6 @@ class TrustRecoverySystem:
     @staticmethod
     def strip_recovery_tag(ai_response):
         """Remove the [TRUST_RECOVERY:*] tag from the AI response before displaying."""
-        import re
         return re.sub(r"\[TRUST_RECOVERY:error\d\]\s*", "", ai_response).strip()
 
     # -------------------------------------------------------------------
@@ -689,7 +759,13 @@ def load_llm():
         verbose=False
     )
 
-def call_llm(messages, temperature=0.7, max_tokens=24000):
+def call_llm(messages, temperature=0.7, max_tokens=3000):
+    if TEST_MODE:
+        idx = st.session_state.get("test_llm_idx", 0)
+        st.session_state.test_llm_idx = idx + 1
+        if idx < len(_TEST_LLM_RESPONSES):
+            return _TEST_LLM_RESPONSES[idx]
+        return "I think we have everything we need."
     llm = load_llm()
     try:
         response = llm.create_chat_completion(
@@ -775,6 +851,50 @@ def user_signals_confirmation(user_input: str) -> bool:
         return False
     # Slow path: ambiguous input — ask the LLM
     return _llm_classify_confirmation(user_input)
+
+
+# Progressive traits shown in Big 6 during about_you (TEST_MODE only).
+# One list per user turn — grows each round so cards appear organically.
+_PROGRESSIVE_TRAITS = [
+    ["thoughtful"],
+    ["thoughtful", "introspective"],
+    ["thoughtful", "introspective", "empathetic"],
+    ["thoughtful", "introspective", "empathetic", "steady", "authentic"],
+]
+
+
+def extract_partial_traits(stage_messages):
+    """Infer traits from conversation so far — no LLM consumed in TEST_MODE."""
+    user_turns = sum(1 for m in stage_messages if m["role"] == "user")
+    if user_turns == 0:
+        return []
+
+    if TEST_MODE:
+        idx = min(user_turns - 1, len(_PROGRESSIVE_TRAITS) - 1)
+        return _PROGRESSIVE_TRAITS[idx]
+
+    # Real mode: lightweight LLM call (separate from the main response call)
+    conversation_text = "\n".join(
+        f"{m['role'].upper()}: {m['content']}"
+        for m in stage_messages
+        if m["role"] in ("user", "assistant")
+    )
+    messages = [
+        {"role": "system", "content": (
+            "You are extracting personality traits. Return ONLY a JSON array of "
+            "1-6 single-word or short-phrase trait strings you can confidently "
+            "infer from the user's messages so far. Example: [\"thoughtful\", "
+            "\"introverted\"]. No other text."
+        )},
+        {"role": "user", "content": f"What traits can you infer so far?\n\n{conversation_text}"}
+    ]
+    response = call_llm(messages, temperature=0.1, max_tokens=200)
+    try:
+        start = response.find("[")
+        end = response.rfind("]") + 1
+        return json.loads(response[start:end])[:6]
+    except Exception:
+        return []
 
 
 def extract_user_portrait(conversation_messages):
@@ -895,6 +1015,10 @@ def init_session_state():
         st.session_state.awaiting_deal_breakers = False
     if "deal_breakers_confirmed" not in st.session_state:
         st.session_state.deal_breakers_confirmed = False
+    if "big6_traits" not in st.session_state:
+        st.session_state.big6_traits = []
+    if "test_llm_idx" not in st.session_state:
+        st.session_state.test_llm_idx = 0
 
 def advance_stage():
     current_idx = STAGES.index(st.session_state.stage)
@@ -935,6 +1059,13 @@ def handle_about_you(user_input):
         ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
         st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
         st.session_state.messages.append({"role": "assistant", "content": ai_response})
+
+        # Progressively surface traits in the Big 6 panel as answers come in
+        partial = extract_partial_traits(st.session_state.stage_messages)
+        if partial:
+            existing = st.session_state.user_portrait.get("personality_traits", [])
+            merged = list(dict.fromkeys(existing + partial))
+            st.session_state.user_portrait["personality_traits"] = merged[:6]
 
         if check_stage_completion("about_you", ai_response):
             st.session_state.messages.append({"role": "assistant", "content": "Does this capture you well? Feel free to correct anything or add something important I missed."})
@@ -1286,6 +1417,359 @@ def handle_refinement(user_input):
 # -------------------------------
 # MAIN UI
 # -------------------------------
+# -----------------------------------------------------------------------
+# BIG 6 — Constants, HTML template, helpers
+# -----------------------------------------------------------------------
+
+CARD_COLORS = ["#4a7fa5", "#3d8b6e", "#7a5195", "#c05c7e", "#d4875a", "#557a95"]
+
+_BIG6_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:#f9fafb;padding:12px 10px 16px}}
+
+/* Header */
+.hd{{font-size:16px;font-weight:700;color:#111827;margin-bottom:6px}}
+.instructions{{background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:10px 12px;margin-bottom:14px}}
+.instructions p{{font-size:12px;color:#374151;line-height:1.55;margin:0}}
+.instructions p+p{{margin-top:5px}}
+
+/* Row layout: [num] [slot] [arrows] */
+.row{{display:flex;align-items:center;gap:8px;margin-bottom:10px}}
+.num{{font-size:12px;color:#9ca3af;width:14px;text-align:right;flex-shrink:0}}
+.slot{{flex:1;height:88px;border-radius:12px;position:relative}}
+
+/* Skeleton */
+.sk{{width:100%;height:88px;border-radius:12px;border:2px dashed #e5e7eb;
+  background:#f0f1f3;display:flex;align-items:flex-end;padding:10px;
+  position:absolute;top:0;left:0}}
+.sk-lines{{display:flex;flex-direction:column;gap:5px}}
+.sk-line{{height:7px;border-radius:3px;
+  background:linear-gradient(90deg,#e5e7eb 25%,#f3f4f6 50%,#e5e7eb 75%);
+  background-size:200% 100%;animation:sh 1.4s ease-in-out infinite}}
+.sk-a{{width:55px}}.sk-b{{width:85px}}
+@keyframes sh{{0%{{background-position:200% 0}}100%{{background-position:-200% 0}}}}
+
+/* Card */
+.card{{width:100%;height:88px;border-radius:12px;padding:10px;
+  display:flex;flex-direction:column;justify-content:flex-end;
+  cursor:grab;position:absolute;top:0;left:0;z-index:2;
+  user-select:none;-webkit-user-select:none;
+  transition:opacity .12s, filter .15s}}
+.card:hover{{filter:brightness(0.88)}}
+.card:active{{cursor:grabbing}}
+.card.dim{{opacity:.3}}
+.card-name{{font-size:13px;font-weight:600;color:#fff;
+  text-shadow:0 1px 3px rgba(0,0,0,.35);pointer-events:none}}
+.card-x{{position:absolute;top:7px;right:7px;width:20px;height:20px;
+  background:rgba(255,255,255,.28);border:none;border-radius:50%;
+  cursor:pointer;font-size:13px;color:#fff;display:flex;align-items:center;
+  justify-content:center;line-height:1;padding:0;transition:background .1s;
+  pointer-events:all}}
+.card-x:hover{{background:rgba(255,255,255,.5)}}
+.slot.over .sk{{border-color:#f43f5e;background:#fff0f3}}
+
+/* Arrow buttons */
+.arrows{{display:flex;flex-direction:column;width:32px;flex-shrink:0;height:88px;
+  justify-content:center;gap:0}}
+.arr{{width:44px;height:44px;background:transparent;border:none;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  border-radius:8px;color:#9ca3af;font-size:18px;line-height:1;padding:0;
+  transition:background .12s, color .12s, transform .08s;flex-shrink:0}}
+.arr:hover{{background:#e5e7eb;color:#374151}}
+.arr:active{{background:#d1d5db;transform:scale(0.88)}}
+.arr.hidden{{visibility:hidden;pointer-events:none}}
+</style></head><body>
+
+<div class="hd">Top 6 Traits</div>
+
+<div class="instructions">
+  <p><strong>Rank what matters most</strong> in your ideal match — 1 is highest priority.</p>
+  <p>Drag cards to reorder &nbsp;·&nbsp; Use ↑↓ to nudge &nbsp;·&nbsp; × to remove a trait.</p>
+</div>
+
+<div id="board"></div>
+
+<script>
+const COLORS = {colors};
+const INCOMING = {traits};
+const KEY = 'big6_v3';
+
+let {{slots, colorMap}} = loadState();
+let dragSrc = null;
+let preview = null;
+let lastRemoved = null;
+let toastTimer = null;
+
+// ── State ──────────────────────────────────────────────────────────────
+function loadState() {{
+  try {{
+    const raw = sessionStorage.getItem(KEY);
+    if (raw) {{
+      const saved = JSON.parse(raw);
+      if (saved && saved.slots) return mergeState(saved);
+    }}
+  }} catch(_) {{}}
+  return buildFresh();
+}}
+
+function buildFresh() {{
+  const colorMap = {{}};
+  const slots = Array(6).fill(null).map((_, i) => {{
+    if (i < INCOMING.length) {{
+      const id = INCOMING[i];
+      const color = COLORS[i % COLORS.length];
+      colorMap[id] = color;
+      return {{id, label: cap(id), color}};
+    }}
+    return null;
+  }});
+  return {{slots, colorMap}};
+}}
+
+function mergeState(saved) {{
+  const colorMap = saved.colorMap || {{}};
+  const slots = saved.slots || Array(6).fill(null);
+  const usedIds = new Set(slots.filter(Boolean).map(s => s.id));
+  const newOnes = INCOMING.filter(t => !usedIds.has(t));
+  let ni = 0, nextColorIdx = Object.keys(colorMap).length;
+  const merged = [...slots];
+  for (let i = 0; i < 6; i++) {{
+    if (!merged[i] && ni < newOnes.length) {{
+      const id = newOnes[ni++];
+      const color = COLORS[nextColorIdx++ % COLORS.length];
+      colorMap[id] = color;
+      merged[i] = {{id, label: cap(id), color}};
+    }}
+  }}
+  return {{slots: merged.slice(0, 6), colorMap}};
+}}
+
+function compact() {{
+  const filled = slots.filter(Boolean);
+  for (let i = 0; i < 6; i++) slots[i] = i < filled.length ? filled[i] : null;
+}}
+
+function save() {{
+  sessionStorage.setItem(KEY, JSON.stringify({{slots, colorMap}}));
+}}
+
+function cap(s) {{ return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }}
+
+// ── Actions ─────────────────────────────────────────────────────────────
+function removeCard(i) {{
+  lastRemoved = {{slot: i, card: slots[i]}};
+  slots[i] = null;
+  compact();
+  preview = null;
+  save();
+  render();
+  showToast();
+}}
+
+function undoRemove() {{
+  if (!lastRemoved) return;
+  const origSlot = lastRemoved.slot;
+  const card = lastRemoved.card;
+  const filledCount = slots.filter(Boolean).length;
+  const insertAt = Math.min(origSlot, filledCount);
+  for (let i = 5; i > insertAt; i--) slots[i] = slots[i - 1];
+  slots[insertAt] = card;
+  lastRemoved = null;
+  clearTimeout(toastTimer);
+  hideToast();
+  save(); render();
+}}
+
+function showToast() {{
+  clearTimeout(toastTimer);
+  const toast = getToastEl();
+  // Re-attach handler each time so it survives Streamlit reruns
+  const oldBtn = toast.querySelector('button');
+  if (oldBtn) {{
+    const btn = oldBtn.cloneNode(true);
+    oldBtn.parentNode.replaceChild(btn, oldBtn);
+    btn.addEventListener('click', undoRemove);
+  }}
+  toast.style.display = 'flex';
+  toastTimer = setTimeout(() => {{ hideToast(); lastRemoved = null; }}, 6000);
+}}
+
+function hideToast() {{
+  try {{ window.parent.document.getElementById('big6-toast').style.display = 'none'; }} catch(_) {{}}
+  const fb = document.getElementById('big6-toast-fb');
+  if (fb) fb.style.display = 'none';
+}}
+
+function getToastEl() {{
+  try {{
+    const pdoc = window.parent.document;
+    let el = pdoc.getElementById('big6-toast');
+    if (!el) {{
+      el = pdoc.createElement('div');
+      el.id = 'big6-toast';
+      el.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1f2937;color:#fff;' +
+        'padding:12px 18px;border-radius:10px;display:none;align-items:center;gap:14px;' +
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;' +
+        'z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.3);';
+      const span = pdoc.createElement('span');
+      span.textContent = 'Trait removed';
+      const btn = pdoc.createElement('button');
+      btn.textContent = 'Undo';
+      btn.style.cssText = 'background:rgba(255,255,255,.18);border:none;color:#fff;' +
+        'padding:5px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
+      btn.addEventListener('mouseover', () => btn.style.background = 'rgba(255,255,255,.3)');
+      btn.addEventListener('mouseout', () => btn.style.background = 'rgba(255,255,255,.18)');
+      el.append(span, btn);
+      pdoc.body.appendChild(el);
+    }}
+    return el;
+  }} catch(e) {{
+    // Sandboxed fallback — toast inside the iframe
+    let el = document.getElementById('big6-toast-fb');
+    if (!el) {{
+      el = document.createElement('div');
+      el.id = 'big6-toast-fb';
+      el.style.cssText = 'position:fixed;bottom:16px;right:16px;background:#1f2937;color:#fff;' +
+        'padding:12px 18px;border-radius:10px;display:none;align-items:center;gap:14px;' +
+        'font-family:-apple-system,sans-serif;font-size:14px;z-index:9999;' +
+        'box-shadow:0 4px 16px rgba(0,0,0,.3);';
+      const span = document.createElement('span');
+      span.textContent = 'Trait removed';
+      const btn = document.createElement('button');
+      btn.textContent = 'Undo';
+      btn.style.cssText = 'background:rgba(255,255,255,.18);border:none;color:#fff;' +
+        'padding:5px 12px;border-radius:6px;cursor:pointer;font-size:13px;';
+      el.append(span, btn);
+      document.body.appendChild(el);
+    }}
+    return el;
+  }}
+}}
+
+function moveUp(i) {{
+  if (i === 0 || !slots[i]) return;
+  [slots[i-1], slots[i]] = [slots[i], slots[i-1]];
+  save(); render();
+}}
+
+function moveDown(i) {{
+  const filled = slots.filter(Boolean).length;
+  if (i >= filled - 1 || !slots[i]) return;
+  [slots[i+1], slots[i]] = [slots[i], slots[i+1]];
+  save(); render();
+}}
+
+// ── Render ─────────────────────────────────────────────────────────────
+function render() {{
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  const display = preview || slots;
+  const filledCount = slots.filter(Boolean).length;
+
+  display.forEach((card, i) => {{
+    const row = mk('div', 'row');
+
+    // Left number
+    const num = mk('div', 'num'); num.textContent = i + 1;
+
+    // Slot
+    const slot = mk('div', 'slot'); slot.dataset.i = i;
+    const sk = mk('div', 'sk');
+    const lines = mk('div', 'sk-lines');
+    lines.append(skl('sk-a'), skl('sk-b'));
+    sk.append(lines); slot.append(sk);
+
+    if (card) {{
+      const c = mk('div', 'card');
+      c.style.background = card.color;
+      c.draggable = true;
+
+      const xb = mk('button', 'card-x'); xb.innerHTML = '&times;';
+      xb.addEventListener('click', e => {{ e.stopPropagation(); removeCard(i); }});
+
+      const nm = mk('div', 'card-name'); nm.textContent = card.label;
+      c.append(xb, nm);
+
+      c.addEventListener('dragstart', e => {{
+        dragSrc = i; e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => c.classList.add('dim'), 0);
+      }});
+      c.addEventListener('dragend', () => {{ dragSrc = null; preview = null; render(); }});
+      slot.append(c);
+    }}
+
+    slot.addEventListener('dragover', e => {{
+      e.preventDefault();
+      if (dragSrc === null || dragSrc === i) return;
+      slot.classList.add('over');
+      const next = [...slots];
+      [next[dragSrc], next[i]] = [next[i], next[dragSrc]];
+      if (JSON.stringify(preview) !== JSON.stringify(next)) {{ preview = next; render(); }}
+    }});
+    slot.addEventListener('dragleave', () => slot.classList.remove('over'));
+    slot.addEventListener('drop', e => {{
+      e.preventDefault();
+      if (dragSrc !== null && dragSrc !== i) {{
+        [slots[dragSrc], slots[i]] = [slots[i], slots[dragSrc]];
+        save();
+      }}
+      dragSrc = null; preview = null; render();
+    }});
+
+    // Right arrows (only for filled slots)
+    const arrows = mk('div', 'arrows');
+    if (card && filledCount > 1) {{
+      const upBtn = mk('button', 'arr');
+      upBtn.innerHTML = '&#8593;';
+      upBtn.title = 'Move up';
+      if (i === 0) upBtn.classList.add('hidden');
+      upBtn.addEventListener('click', () => moveUp(i));
+
+      const dnBtn = mk('button', 'arr');
+      dnBtn.innerHTML = '&#8595;';
+      dnBtn.title = 'Move down';
+      if (i === filledCount - 1) dnBtn.classList.add('hidden');
+      dnBtn.addEventListener('click', () => moveDown(i));
+
+      arrows.append(upBtn, dnBtn);
+    }}
+
+    row.append(num, slot, arrows);
+    board.append(row);
+  }});
+}}
+
+function mk(tag, cls) {{ const e = document.createElement(tag); if (cls) e.className = cls; return e; }}
+function skl(cls) {{ const l = mk('div', 'sk-line'); l.classList.add(cls); return l; }}
+
+render();
+</script></body></html>"""
+
+
+def build_big6_traits():
+    portrait = st.session_state.get("user_portrait", {})
+    if not portrait:
+        return []
+    traits = list(portrait.get("personality_traits", []))
+    for v in portrait.get("values", []):
+        if v not in traits and len(traits) < 6:
+            traits.append(v)
+    return traits[:6]
+
+
+def render_big6_panel():
+    traits = build_big6_traits()
+    html = _BIG6_HTML.format(
+        colors=json.dumps(CARD_COLORS),
+        traits=json.dumps(traits),
+    )
+    components.html(html, height=900, scrolling=False)
+
+
+# -----------------------------------------------------------------------
 def main():
     st.set_page_config(
         page_title="AI Relationship Profile Builder",
@@ -1314,6 +1798,11 @@ def main():
         [data-testid="stSidebar"] {
             display: flex !important;
             position: sticky !important;
+            background-color: #f9fafb !important;
+            border-right: 1px solid #e5e7eb !important;
+        }
+        [data-testid="stSidebar"] > div:first-child {
+            background-color: #f9fafb !important;
         }
 
         /* Target the actual inner container Streamlit renders */
@@ -1341,8 +1830,12 @@ def main():
         /* Textarea itself */
         [data-testid="stChatInput"] textarea {
             background-color: #ffffff !important;
+            color: #111827 !important;
             border: none !important;
             box-shadow: none !important;
+        }
+        [data-testid="stChatInput"] textarea::placeholder {
+            color: #9ca3af !important;
         }
 
         /* Rose pink pill send button */
@@ -1390,6 +1883,24 @@ def main():
         
         
 
+        /* Big 6 right column — fixed full-height right sidebar */
+        [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
+            position: fixed !important;
+            right: 0 !important;
+            top: 3.75rem !important;
+            height: calc(100vh - 3.75rem) !important;
+            width: 280px !important;
+            overflow-y: auto !important;
+            border-left: 1px solid #e5e7eb !important;
+            background-color: #f9fafb !important;
+            padding: 0 !important;
+            z-index: 100 !important;
+        }
+        /* Prevent main content from sliding under the right sidebar */
+        section[data-testid="stMain"] > div:first-child {
+            padding-right: 296px !important;
+        }
+
         @media (max-width: 768px) {
             [data-testid="stSidebar"] > div:first-child {
                 width: 180px !important;
@@ -1422,9 +1933,18 @@ def main():
             st.session_state.clear()
             st.rerun()
 
-    # Main content
+    # Main content — two-column layout: chat left, Big 6 right
     st.title("AI Relationship Profile Builder")
+    left_col, right_col = st.columns([4, 1.5])
 
+    with right_col:
+        render_big6_panel()
+
+    with left_col:
+        render_chat_content()
+
+
+def render_chat_content():
     if st.session_state.stage == "intro":
         st.markdown("""
         This tool builds a detailed profile of your ideal connection — whether that's a
@@ -1493,6 +2013,12 @@ def main():
                     ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
                     st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
                     st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                    # Progressively surface traits in Big 6 as answers come in
+                    partial = extract_partial_traits(st.session_state.stage_messages)
+                    if partial:
+                        existing = st.session_state.user_portrait.get("personality_traits", [])
+                        merged = list(dict.fromkeys(existing + partial))
+                        st.session_state.user_portrait["personality_traits"] = merged[:6]
                     if check_stage_completion("about_you", ai_response):
                         st.session_state.messages.append({"role": "assistant", "content": "Does this capture you well? Feel free to correct anything or add something important I missed."})
                         st.session_state.awaiting_summary_confirmation = True
