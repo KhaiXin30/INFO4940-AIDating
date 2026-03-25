@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 # CONFIG
 # -------------------------------
 MODEL_PATH = "llama-3.1-8b.gguf"
-TEST_MODE = True  # Set to False to use the real model
+TEST_MODE = False  # Set to False to use the real model
 
 # 25 mock LLM responses covering the full happy path + trust recovery.
 # Ordered to match the call sequence:
@@ -960,27 +960,56 @@ def user_signals_confirmation(user_input: str) -> bool:
     return _llm_classify_confirmation(user_input)
 
 
-# Progressive traits shown in Big 6 during about_you (TEST_MODE only).
-# One list per user turn — grows each round so cards appear organically.
-_PROGRESSIVE_TRAITS = [
-    ["thoughtful"],
-    ["thoughtful", "introspective"],
-    ["thoughtful", "introspective", "empathetic"],
-    ["thoughtful", "introspective", "empathetic", "steady", "authentic"],
+# ── Live Trait Transparency ─────────────────────────────────────────────
+# Dimensions backed by Big Five / MBTI frameworks.
+DIMENSION_LABELS = {
+    "social_energy":   "Social Energy",
+    "thinking_style":  "Thinking Style",
+    "decision_making": "Decision-Making",
+    "structure":       "Structure",
+    "openness":        "Openness",
+    "emotional_tone":  "Emotional Tone",
+    "communication":   "Communication",
+    "values":          "Core Values",
+}
+ADD_THRESHOLD        = 0.75   # min confidence to add a card
+ADD_MIN_EVIDENCE     = 2      # min distinct turns that must have signalled this dimension
+REMOVE_THRESHOLD     = 0.40   # below this AND evidence_count drops → remove card
+BIG5_TO_DIM = {
+    "extraversion":      "social_energy",
+    "openness":          "openness",
+    "agreeableness":     "emotional_tone",
+    "conscientiousness": "structure",
+    "neuroticism":       "emotional_tone",
+}
+
+# TEST_MODE fixture — cards only appear after 2+ supporting turns.
+# evidence_count tracks how many turns contributed to each dimension.
+_PROGRESSIVE_LIVE_TRAITS = [
+    {},   # turn 1: too early, gathering signals
+    {},   # turn 2: still building — nothing confident enough yet
+    {"social_energy":  {"label": "Introvert",  "confidence": 0.78, "evidence_count": 2}},
+    {"social_energy":  {"label": "Introvert",  "confidence": 0.82, "evidence_count": 3},
+     "thinking_style": {"label": "Analytical", "confidence": 0.76, "evidence_count": 2}},
+    {"social_energy":  {"label": "Introvert",  "confidence": 0.84, "evidence_count": 4},
+     "thinking_style": {"label": "Analytical", "confidence": 0.79, "evidence_count": 3},
+     "values":         {"label": "Authentic",  "confidence": 0.76, "evidence_count": 2}},
+    {"social_energy":  {"label": "Introvert",  "confidence": 0.87, "evidence_count": 5},
+     "thinking_style": {"label": "Analytical", "confidence": 0.82, "evidence_count": 4},
+     "values":         {"label": "Authentic",  "confidence": 0.79, "evidence_count": 3},
+     "openness":       {"label": "Curious",    "confidence": 0.76, "evidence_count": 2}},
 ]
 
 
-def extract_partial_traits(stage_messages):
-    """Infer traits from conversation so far — no LLM consumed in TEST_MODE."""
+def extract_live_traits(stage_messages):
+    """Return {dim: {label, confidence}} from conversation so far."""
     user_turns = sum(1 for m in stage_messages if m["role"] == "user")
     if user_turns == 0:
-        return []
-
+        return {}
     if TEST_MODE:
-        idx = min(user_turns - 1, len(_PROGRESSIVE_TRAITS) - 1)
-        return _PROGRESSIVE_TRAITS[idx]
+        idx = min(user_turns - 1, len(_PROGRESSIVE_LIVE_TRAITS) - 1)
+        return _PROGRESSIVE_LIVE_TRAITS[idx]
 
-    # Real mode: lightweight LLM call (separate from the main response call)
     conversation_text = "\n".join(
         f"{m['role'].upper()}: {m['content']}"
         for m in stage_messages
@@ -988,20 +1017,273 @@ def extract_partial_traits(stage_messages):
     )
     messages = [
         {"role": "system", "content": (
-            "You are extracting personality traits. Return ONLY a JSON array of "
-            "1-6 single-word or short-phrase trait strings you can confidently "
-            "infer from the user's messages so far. Example: [\"thoughtful\", "
-            "\"introverted\"]. No other text."
+            "You are carefully analyzing a user's personality from a conversation. "
+            "Be conservative — one mention of something is never enough to reach high confidence. "
+            "A trait only earns high confidence when the user has said multiple things, "
+            "across different messages, that consistently point to the same conclusion. "
+            "Return ONLY a JSON object. Valid dimension IDs: social_energy, thinking_style, "
+            "decision_making, structure, openness, emotional_tone, communication, values. "
+            "Each value: {\"label\": \"short phrase (3 words max)\", \"confidence\": 0.0-1.0, "
+            "\"evidence_count\": N} where evidence_count is the number of DISTINCT user "
+            "statements that support this dimension. "
+            "Only include a dimension if evidence_count >= 2 AND confidence >= 0.60. "
+            "Prefer returning 1-2 well-supported traits over many guesses. "
+            "No other text. Example: "
+            "{\"social_energy\": {\"label\": \"Introvert\", \"confidence\": 0.82, \"evidence_count\": 3}}"
         )},
-        {"role": "user", "content": f"What traits can you infer so far?\n\n{conversation_text}"}
+        {"role": "user", "content": f"Analyze:\n\n{conversation_text}"}
     ]
-    response = call_llm(messages, temperature=0.1, max_tokens=200)
+    response = call_llm(messages, temperature=0.1, max_tokens=400)
+    try:
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        return json.loads(response[start:end])
+    except Exception:
+        return {}
+
+
+def _merge_live_traits(new_traits):
+    """Merge {dim: {label, confidence, evidence_count}} into live_traits with strict gating.
+
+    A card is only added when BOTH confidence >= ADD_THRESHOLD AND
+    evidence_count >= ADD_MIN_EVIDENCE. Once visible, a card is only
+    removed if confidence drops below REMOVE_THRESHOLD. Evidence counts
+    accumulate across calls (never decrease).
+    """
+    current = st.session_state.live_traits
+    for dim, data in new_traits.items():
+        conf = data.get("confidence", 0)
+        ev   = data.get("evidence_count", 1)
+        if dim in current:
+            # Always accumulate evidence; keep the higher confidence
+            prev_ev   = current[dim].get("evidence_count", 1)
+            new_ev    = max(prev_ev, ev)
+            new_conf  = max(current[dim].get("confidence", 0), conf)
+            if conf < REMOVE_THRESHOLD and new_ev < ADD_MIN_EVIDENCE:
+                del current[dim]
+            else:
+                current[dim] = {**data, "confidence": new_conf, "evidence_count": new_ev}
+        elif conf >= ADD_THRESHOLD and ev >= ADD_MIN_EVIDENCE:
+            current[dim] = data
+    st.session_state.live_traits = current
+
+
+def rank_live_traits():
+    """Return top-6 trait dicts sorted by evidence density (evidence_count × confidence).
+
+    Evidence density ranks traits that are backed by many independent signals
+    above those that happen to have a single high-confidence inference.
+    """
+    live = st.session_state.get("live_traits", {})
+    items = []
+    for dim, data in live.items():
+        conf = data.get("confidence", 0.5)
+        ev   = data.get("evidence_count", 1)
+        items.append({
+            "id": dim,
+            "dimension": DIMENSION_LABELS.get(dim, dim.replace("_", " ").title()),
+            "label": data["label"],
+            "confidence": conf,
+            "_rank_score": ev * conf,   # internal — not sent to JS
+        })
+    items.sort(key=lambda x: x["_rank_score"], reverse=True)
+    # Strip internal key before passing to JS
+    for item in items:
+        item.pop("_rank_score", None)
+    return items[:6]
+
+
+def _backfill_live_traits_from_portrait(portrait):
+    """Seed live_traits from the extracted user_portrait after about_you ends."""
+    portrait_dims = {
+        "communication":   portrait.get("communication_style", ""),
+        "values":          ", ".join(portrait.get("values", [])[:2]),
+        "decision_making": portrait.get("decision_making", ""),
+        "social_energy":   portrait.get("social_energy", ""),
+        "thinking_style":  portrait.get("thinking_style", ""),
+        "structure":       portrait.get("structure_vs_spontaneity", ""),
+        "openness":        portrait.get("openness_to_experience", ""),
+    }
+    new_traits = {}
+    for dim, val in portrait_dims.items():
+        if val and str(val).strip():
+            # Portrait is derived from the full conversation — treat as highly evidenced
+            new_traits[dim] = {"label": str(val).strip(), "confidence": 0.80, "evidence_count": 5}
+    big5 = portrait.get("big_five_estimates", {})
+    for b5_key, dim in BIG5_TO_DIM.items():
+        val = big5.get(b5_key, "")
+        if val and str(val).strip() and dim not in new_traits:
+            new_traits[dim] = {"label": str(val).strip(), "confidence": 0.75, "evidence_count": 4}
+    _merge_live_traits(new_traits)
+    _seed_match_priorities_from_portrait(portrait)
+
+
+# ── Match Priority Seeding ───────────────────────────────────────────────
+# What the user values in a partner — ranked by importance and editable.
+PRIORITY_POOL = {
+    "shared_values":           "Shared Values",
+    "emotional_depth":         "Emotional Depth",
+    "intellectual_connection": "Intellectual Connection",
+    "space_independence":      "Space & Independence",
+    "communication_style":     "Communication Style",
+    "humor_warmth":            "Humor & Warmth",
+    "life_goals":              "Life Goals",
+    "reliability_trust":       "Reliability & Trust",
+    "spontaneity":             "Spontaneity",
+    "physical_chemistry":      "Physical Chemistry",
+}
+
+_TEST_PRIORITIES = [
+    {"id": "shared_values",           "label": "Shared Values",           "reason": "You spoke a lot about authenticity and wanting someone whose principles align with yours."},
+    {"id": "emotional_depth",         "label": "Emotional Depth",         "reason": "You value deep, meaningful conversations over surface-level connection."},
+    {"id": "intellectual_connection", "label": "Intellectual Connection", "reason": "Curiosity and stimulating exchange came up consistently in how you described good relationships."},
+    {"id": "space_independence",      "label": "Space & Independence",    "reason": "You described yourself as someone who needs room to recharge and pursue your own interests."},
+]
+
+
+def _seed_match_priorities_from_portrait(portrait):
+    """Infer what the user values most in a partner and store as match_priorities.
+    Only runs once — does not overwrite a list the user has already reordered.
+    """
+    if st.session_state.match_priorities:
+        return  # already seeded or user has reordered
+
+    if TEST_MODE:
+        st.session_state.match_priorities = _TEST_PRIORITIES
+        return
+
+    portrait_text = json.dumps(portrait, indent=2)
+    relationship_type = st.session_state.get("relationship_type", "relationship")
+    messages = [
+        {"role": "system", "content": (
+            "Based on a user's personality portrait, infer 4-6 qualities they most "
+            f"value in a partner for a {relationship_type}. "
+            "Return ONLY a JSON array ordered from most to least important. "
+            "Each item: {\"id\": \"...\", \"label\": \"short phrase (2-4 words)\", "
+            "\"reason\": \"one sentence explaining why this matters given the portrait\"}. "
+            "Prefer IDs from: shared_values, emotional_depth, intellectual_connection, "
+            "space_independence, communication_style, humor_warmth, life_goals, "
+            "reliability_trust, spontaneity, physical_chemistry. "
+            "Create a new id+label+reason if none fit. No other text."
+        )},
+        {"role": "user", "content": f"Portrait:\n{portrait_text}"}
+    ]
+    response = call_llm(messages, temperature=0.2, max_tokens=600)
     try:
         start = response.find("[")
         end = response.rfind("]") + 1
-        return json.loads(response[start:end])[:6]
+        st.session_state.match_priorities = json.loads(response[start:end])[:6]
     except Exception:
-        return []
+        st.session_state.match_priorities = [
+            {"id": "shared_values",   "label": "Shared Values",   "reason": ""},
+            {"id": "emotional_depth", "label": "Emotional Depth", "reason": ""},
+        ]
+
+
+_TEST_LOOKING_FOR = [
+    {"id": "emotional_presence",     "label": "Emotional Presence",     "reason": "You want someone who is genuinely available — not just physically there, but emotionally tuned in."},
+    {"id": "quiet_confidence",       "label": "Quiet Confidence",       "reason": "You're drawn to people who are sure of themselves without needing to prove it loudly."},
+    {"id": "intellectual_curiosity", "label": "Intellectual Curiosity", "reason": "You want to be with someone who asks questions and finds the world genuinely interesting."},
+    {"id": "steady_reliability",     "label": "Steady Reliability",     "reason": "Consistency matters to you — you want someone who shows up the same way every time."},
+]
+
+
+def _generate_looking_for_items(portrait, relationship_type):
+    """Generate what the user is looking for in a partner — structured, ordered list.
+    Only runs once — does not overwrite if already seeded.
+    """
+    if st.session_state.what_looking_for:
+        return  # already seeded
+
+    if TEST_MODE:
+        st.session_state.what_looking_for = _TEST_LOOKING_FOR
+        return
+
+    portrait_text = json.dumps(portrait, indent=2)
+    priorities_text = ""
+    if st.session_state.match_priorities:
+        priorities_text = "\n\nTheir confirmed match priorities (in order):\n" + "\n".join(
+            f"{i+1}. {p['label']}" + (f" — {p['reason']}" if p.get("reason") else "")
+            for i, p in enumerate(st.session_state.match_priorities)
+        )
+    messages = [
+        {"role": "system", "content": (
+            f"Based on the user's personality portrait and confirmed match priorities, "
+            f"generate 4-6 specific qualities they are looking for in a {relationship_type}. "
+            "These should be concrete traits or behaviours a partner should have. "
+            "Return ONLY a JSON array ordered from most to least important. "
+            "Each item: {\"id\": \"snake_case_id\", \"label\": \"short phrase (2-4 words)\", "
+            "\"reason\": \"one sentence explaining why this fits given the portrait\"}. "
+            "No other text."
+        )},
+        {"role": "user", "content": f"Portrait:\n{portrait_text}{priorities_text}"}
+    ]
+    response = call_llm(messages, temperature=0.2, max_tokens=600)
+    try:
+        start = response.find("[")
+        end = response.rfind("]") + 1
+        st.session_state.what_looking_for = json.loads(response[start:end])[:6]
+    except Exception:
+        st.session_state.what_looking_for = [
+            {"id": "emotional_presence", "label": "Emotional Presence", "reason": ""},
+            {"id": "steady_reliability", "label": "Steady Reliability", "reason": ""},
+        ]
+
+
+_TEST_DEAL_BREAKERS = [
+    {"id": "emotional_unavailability",  "label": "Emotional Unavailability",  "reason": "You lead with empathy and need that reciprocated — someone who shuts down would leave you feeling invisible."},
+    {"id": "dismissiveness",            "label": "Dismissiveness",            "reason": "You think carefully before you speak; a partner who brushes off what you share erodes trust quickly."},
+    {"id": "constant_unpredictability", "label": "Constant Unpredictability", "reason": "You need a stable foundation — ongoing chaos exhausts and unsettles you."},
+]
+
+
+def _generate_deal_breaker_items(portrait, relationship_type):
+    """Generate the user's deal breakers as a structured, ordered list.
+    Only runs once — does not overwrite if already seeded.
+    """
+    if st.session_state.deal_breaker_items:
+        return  # already seeded
+
+    if TEST_MODE:
+        st.session_state.deal_breaker_items = _TEST_DEAL_BREAKERS
+        return
+
+    portrait_text = json.dumps(portrait, indent=2)
+    priorities_text = ""
+    if st.session_state.match_priorities:
+        priorities_text = "\n\nConfirmed match priorities:\n" + "\n".join(
+            f"{i+1}. {p['label']}" + (f" — {p['reason']}" if p.get("reason") else "")
+            for i, p in enumerate(st.session_state.match_priorities)
+        )
+    looking_for_text = ""
+    if st.session_state.what_looking_for:
+        looking_for_text = "\n\nWhat they are looking for:\n" + "\n".join(
+            f"{i+1}. {p['label']}" + (f" — {p['reason']}" if p.get("reason") else "")
+            for i, p in enumerate(st.session_state.what_looking_for)
+        )
+    messages = [
+        {"role": "system", "content": (
+            f"Based on the user's personality portrait, confirmed priorities, and what they are looking for, "
+            f"infer 2-4 genuine deal breakers for their {relationship_type}. "
+            "These should be behaviours or traits that are non-negotiable given who this person is — "
+            "things that would be genuinely incompatible with their personality and needs. "
+            "Return ONLY a JSON array ordered from most to least critical. "
+            "Each item: {\"id\": \"snake_case_id\", \"label\": \"short phrase (2-4 words)\", "
+            "\"reason\": \"one sentence explaining why this would be incompatible\"}. "
+            "No other text."
+        )},
+        {"role": "user", "content": f"Portrait:\n{portrait_text}{priorities_text}{looking_for_text}"}
+    ]
+    response = call_llm(messages, temperature=0.2, max_tokens=600)
+    try:
+        start = response.find("[")
+        end = response.rfind("]") + 1
+        st.session_state.deal_breaker_items = json.loads(response[start:end])[:4]
+    except Exception:
+        st.session_state.deal_breaker_items = [
+            {"id": "emotional_unavailability", "label": "Emotional Unavailability", "reason": ""},
+            {"id": "dismissiveness",           "label": "Dismissiveness",           "reason": ""},
+        ]
 
 
 def extract_user_portrait(conversation_messages):
@@ -1124,6 +1406,20 @@ def init_session_state():
         st.session_state.deal_breakers_confirmed = False
     if "big6_traits" not in st.session_state:
         st.session_state.big6_traits = []
+    if "live_traits" not in st.session_state:
+        st.session_state.live_traits = {}
+    if "match_priorities" not in st.session_state:
+        st.session_state.match_priorities = []
+    if "awaiting_priority_ranking" not in st.session_state:
+        st.session_state.awaiting_priority_ranking = False
+    if "awaiting_looking_for_ranking" not in st.session_state:
+        st.session_state.awaiting_looking_for_ranking = False
+    if "what_looking_for" not in st.session_state:
+        st.session_state.what_looking_for = []
+    if "deal_breaker_items" not in st.session_state:
+        st.session_state.deal_breaker_items = []
+    if "awaiting_deal_breaker_ranking" not in st.session_state:
+        st.session_state.awaiting_deal_breaker_ranking = False
     if "profile_a" not in st.session_state:
         st.session_state.profile_a = ""
     if "profile_b" not in st.session_state:
@@ -1161,6 +1457,7 @@ def advance_stage():
         st.session_state.current_category_index = 0
         st.session_state.awaiting_deal_breakers = False
         st.session_state.deal_breakers_confirmed = False
+        st.session_state.awaiting_deal_breaker_ranking = False
         st.session_state.profile_a = ""
         st.session_state.profile_b = ""
         st.session_state.awaiting_profile_choice = False
@@ -1185,12 +1482,12 @@ def handle_about_you(user_input):
         st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
         st.session_state.messages.append({"role": "assistant", "content": ai_response})
 
-        # Progressively surface traits in the Big 6 panel as answers come in
-        partial = extract_partial_traits(st.session_state.stage_messages)
-        if partial:
-            existing = st.session_state.user_portrait.get("personality_traits", [])
-            merged = list(dict.fromkeys(existing + partial))
-            st.session_state.user_portrait["personality_traits"] = merged[:6]
+        # Progressively surface traits in Big 6 as answers come in (every 2nd turn)
+        _ut = sum(1 for m in st.session_state.stage_messages if m["role"] == "user")
+        if _ut % 2 == 0 or _ut <= 2:
+            _new_live = extract_live_traits(st.session_state.stage_messages)
+            if _new_live:
+                _merge_live_traits(_new_live)
 
         if check_stage_completion("about_you", ai_response):
             st.session_state.messages.append({"role": "assistant", "content": "Does this capture you well? Feel free to correct anything or add something important I missed."})
@@ -1208,10 +1505,16 @@ def handle_summary_confirmation(user_input):
 
     with st.spinner("Analyzing your response..."):
         st.session_state.user_portrait = extract_user_portrait(st.session_state.stage_messages)
-    advance_stage()
-    start_proposition_stage()
+    _backfill_live_traits_from_portrait(st.session_state.user_portrait)
+    st.session_state.awaiting_priority_ranking = True
 
-def start_proposition_stage():
+def start_proposition_stage(priorities_confirmed=False):
+    st.session_state.trait_map_confirmed = priorities_confirmed
+    st.session_state.proposition_categories = []
+    st.session_state.current_category_index = 0
+    st.session_state.awaiting_deal_breakers = False
+    st.session_state.deal_breakers_confirmed = False
+
     user_context_text = (
         f"The user is looking for: {st.session_state.relationship_type}\n\n"
         f"Here is the structured portrait of who they are:\n"
@@ -1224,20 +1527,24 @@ def start_proposition_stage():
     user_context = {"role": "user", "content": user_context_text}
     st.session_state.stage_messages = [system_msg, user_context]
 
-    st.session_state.trait_map_confirmed = False
-    st.session_state.proposition_categories = []
-    st.session_state.current_category_index = 0
-    st.session_state.awaiting_deal_breakers = False
-    st.session_state.deal_breakers_confirmed = False
+    if priorities_confirmed:
+        # Skip the unified LLM — show interactive "what you are looking for" ranking instead
+        with st.spinner("Building your profile details..."):
+            _generate_looking_for_items(
+                st.session_state.user_portrait,
+                st.session_state.relationship_type,
+            )
+        st.session_state.awaiting_looking_for_ranking = True
+    else:
+        # Original flow: fire the unified proposition LLM
+        with st.spinner("Reflecting on what you're looking for..."):
+            ai_response = call_llm(st.session_state.stage_messages, max_tokens=4000)
 
-    with st.spinner("Reflecting on what you're looking for..."):
-        ai_response = call_llm(st.session_state.stage_messages, max_tokens=4000)
-
-    if ai_response:
-        st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
-        ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
-        st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-        st.session_state.messages.append({"role": "assistant", "content": ai_response})
+        if ai_response:
+            st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
+            ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
+            st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
+            st.session_state.messages.append({"role": "assistant", "content": ai_response})
 
 def _get_proposition_conversation_text():
     """Build the confirmed conversation text from stage_messages for context."""
@@ -1382,6 +1689,10 @@ def handle_proposition(user_input):
                 )
             advance_stage()
             start_tension_stage()
+    else:
+        # Safety fallback: trait_map_confirmed=True but awaiting_deal_breakers=False
+        # This state should not be reachable with the new ranking flow, but guard it anyway
+        st.session_state.awaiting_looking_for_ranking = True
 
 
 def tension_clarification_turn_user_message(clarification_num: int) -> str:
@@ -1572,346 +1883,85 @@ _BIG6_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  background:#f9fafb;padding:12px 10px 16px}}
-
-/* Header */
-.hd{{font-size:16px;font-weight:700;color:#111827;margin-bottom:6px}}
-.instructions{{background:#fff;border:1px solid #e5e7eb;border-radius:10px;
-  padding:10px 12px;margin-bottom:14px}}
-.instructions p{{font-size:12px;color:#374151;line-height:1.55;margin:0}}
-.instructions p+p{{margin-top:5px}}
-
-/* Row layout: [num] [slot] [arrows] */
-.row{{display:flex;align-items:center;gap:8px;margin-bottom:10px}}
-.num{{font-size:12px;color:#9ca3af;width:14px;text-align:right;flex-shrink:0}}
-.slot{{flex:1;height:88px;border-radius:12px;position:relative}}
-
-/* Skeleton */
-.sk{{width:100%;height:88px;border-radius:12px;border:2px dashed #e5e7eb;
-  background:#f0f1f3;display:flex;align-items:flex-end;padding:10px;
-  position:absolute;top:0;left:0}}
-.sk-lines{{display:flex;flex-direction:column;gap:5px}}
-.sk-line{{height:7px;border-radius:3px;
-  background:linear-gradient(90deg,#e5e7eb 25%,#f3f4f6 50%,#e5e7eb 75%);
-  background-size:200% 100%;animation:sh 1.4s ease-in-out infinite}}
-.sk-a{{width:55px}}.sk-b{{width:85px}}
-@keyframes sh{{0%{{background-position:200% 0}}100%{{background-position:-200% 0}}}}
-
-/* Card */
-.card{{width:100%;height:88px;border-radius:12px;padding:10px;
-  display:flex;flex-direction:column;justify-content:flex-end;
-  cursor:grab;position:absolute;top:0;left:0;z-index:2;
-  user-select:none;-webkit-user-select:none;
-  transition:opacity .12s, filter .15s}}
-.card:hover{{filter:brightness(0.88)}}
-.card:active{{cursor:grabbing}}
-.card.dim{{opacity:.3}}
-.card-name{{font-size:13px;font-weight:600;color:#fff;
-  text-shadow:0 1px 3px rgba(0,0,0,.35);pointer-events:none}}
-.card-x{{position:absolute;top:7px;right:7px;width:20px;height:20px;
-  background:rgba(255,255,255,.28);border:none;border-radius:50%;
-  cursor:pointer;font-size:13px;color:#fff;display:flex;align-items:center;
-  justify-content:center;line-height:1;padding:0;transition:background .1s;
-  pointer-events:all}}
-.card-x:hover{{background:rgba(255,255,255,.5)}}
-.slot.over .sk{{border-color:#f43f5e;background:#fff0f3}}
-
-/* Arrow buttons */
-.arrows{{display:flex;flex-direction:column;width:32px;flex-shrink:0;height:88px;
-  justify-content:center;gap:0}}
-.arr{{width:44px;height:44px;background:transparent;border:none;
-  cursor:pointer;display:flex;align-items:center;justify-content:center;
-  border-radius:8px;color:#9ca3af;font-size:18px;line-height:1;padding:0;
-  transition:background .12s, color .12s, transform .08s;flex-shrink:0}}
-.arr:hover{{background:#e5e7eb;color:#374151}}
-.arr:active{{background:#d1d5db;transform:scale(0.88)}}
-.arr.hidden{{visibility:hidden;pointer-events:none}}
+  background:transparent;padding:8px 6px 14px}}
+.hd{{font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;
+  letter-spacing:.7px;margin-bottom:4px}}
+.sub{{font-size:11px;color:#9ca3af;margin-bottom:10px;line-height:1.4}}
+.chips{{display:flex;flex-wrap:wrap;gap:8px}}
+.chip{{background:#fff;border:1px solid #e5e7eb;border-left:3px solid #ccc;
+  border-radius:9px;padding:7px 26px 7px 10px;position:relative;min-width:0}}
+.chip-dim{{font-size:10px;color:#9ca3af;text-transform:uppercase;
+  letter-spacing:.5px;margin-bottom:2px}}
+.chip-label{{font-size:12px;font-weight:600;color:#111827;line-height:1.2}}
+.chip-bar{{width:100%;height:2px;background:#f3f4f6;border-radius:1px;margin-top:5px}}
+.chip-fill{{height:100%;border-radius:1px;transition:width .4s ease}}
+.chip-x{{position:absolute;top:6px;right:5px;width:16px;height:16px;
+  background:rgba(0,0,0,.06);border:none;border-radius:50%;cursor:pointer;
+  font-size:11px;color:#9ca3af;display:flex;align-items:center;justify-content:center;
+  padding:0;line-height:1;transition:background .1s,color .1s}}
+.chip-x:hover{{background:rgba(0,0,0,.14);color:#374151}}
+.empty{{font-size:12px;color:#d1d5db;font-style:italic}}
 </style></head><body>
-
-<div class="hd">Top 6 Traits</div>
-
-<div class="instructions">
-  <p><strong>Rank what matters most</strong> in your ideal match — 1 is highest priority.</p>
-  <p>Drag cards to reorder &nbsp;·&nbsp; Use ↑↓ to nudge &nbsp;·&nbsp; × to remove a trait.</p>
-</div>
-
+<div class="hd">About You</div>
+<div class="sub">What the model has learned — tap \u00d7 to remove anything that\u2019s off.</div>
 <div id="board"></div>
-
 <script>
 const COLORS = {colors};
-const INCOMING = {traits};
-const KEY = 'big6_v3';
+const CHIPS = {chips};
+const RK = 'removed_chips_v1';
+let removed = loadRemoved();
 
-let {{slots, colorMap}} = loadState();
-let dragSrc = null;
-let preview = null;
-let lastRemoved = null;
-let toastTimer = null;
-
-// ── State ──────────────────────────────────────────────────────────────
-function loadState() {{
-  try {{
-    const raw = sessionStorage.getItem(KEY);
-    if (raw) {{
-      const saved = JSON.parse(raw);
-      if (saved && saved.slots) return mergeState(saved);
-    }}
-  }} catch(_) {{}}
-  return buildFresh();
+function loadRemoved() {{
+  try {{ return new Set(JSON.parse(sessionStorage.getItem(RK) || '[]')); }}
+  catch(_) {{ return new Set(); }}
 }}
+function saveRemoved() {{ sessionStorage.setItem(RK, JSON.stringify([...removed])); }}
+function removeChip(id) {{ removed.add(id); saveRemoved(); render(); }}
+function mk(tag, cls) {{ const e = document.createElement(tag); if (cls) e.className = cls; return e; }}
 
-function buildFresh() {{
-  const colorMap = {{}};
-  const slots = Array(6).fill(null).map((_, i) => {{
-    if (i < INCOMING.length) {{
-      const id = INCOMING[i];
-      const color = COLORS[i % COLORS.length];
-      colorMap[id] = color;
-      return {{id, label: cap(id), color}};
-    }}
-    return null;
-  }});
-  return {{slots, colorMap}};
-}}
-
-function mergeState(saved) {{
-  const colorMap = saved.colorMap || {{}};
-  const slots = saved.slots || Array(6).fill(null);
-  const usedIds = new Set(slots.filter(Boolean).map(s => s.id));
-  const newOnes = INCOMING.filter(t => !usedIds.has(t));
-  let ni = 0, nextColorIdx = Object.keys(colorMap).length;
-  const merged = [...slots];
-  for (let i = 0; i < 6; i++) {{
-    if (!merged[i] && ni < newOnes.length) {{
-      const id = newOnes[ni++];
-      const color = COLORS[nextColorIdx++ % COLORS.length];
-      colorMap[id] = color;
-      merged[i] = {{id, label: cap(id), color}};
-    }}
-  }}
-  return {{slots: merged.slice(0, 6), colorMap}};
-}}
-
-function compact() {{
-  const filled = slots.filter(Boolean);
-  for (let i = 0; i < 6; i++) slots[i] = i < filled.length ? filled[i] : null;
-}}
-
-function save() {{
-  sessionStorage.setItem(KEY, JSON.stringify({{slots, colorMap}}));
-}}
-
-function cap(s) {{ return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }}
-
-// ── Actions ─────────────────────────────────────────────────────────────
-function removeCard(i) {{
-  lastRemoved = {{slot: i, card: slots[i]}};
-  slots[i] = null;
-  compact();
-  preview = null;
-  save();
-  render();
-  showToast();
-}}
-
-function undoRemove() {{
-  if (!lastRemoved) return;
-  const origSlot = lastRemoved.slot;
-  const card = lastRemoved.card;
-  const filledCount = slots.filter(Boolean).length;
-  const insertAt = Math.min(origSlot, filledCount);
-  for (let i = 5; i > insertAt; i--) slots[i] = slots[i - 1];
-  slots[insertAt] = card;
-  lastRemoved = null;
-  clearTimeout(toastTimer);
-  hideToast();
-  save(); render();
-}}
-
-function showToast() {{
-  clearTimeout(toastTimer);
-  const toast = getToastEl();
-  // Re-attach handler each time so it survives Streamlit reruns
-  const oldBtn = toast.querySelector('button');
-  if (oldBtn) {{
-    const btn = oldBtn.cloneNode(true);
-    oldBtn.parentNode.replaceChild(btn, oldBtn);
-    btn.addEventListener('click', undoRemove);
-  }}
-  toast.style.display = 'flex';
-  toastTimer = setTimeout(() => {{ hideToast(); lastRemoved = null; }}, 6000);
-}}
-
-function hideToast() {{
-  try {{ window.parent.document.getElementById('big6-toast').style.display = 'none'; }} catch(_) {{}}
-  const fb = document.getElementById('big6-toast-fb');
-  if (fb) fb.style.display = 'none';
-}}
-
-function getToastEl() {{
-  try {{
-    const pdoc = window.parent.document;
-    let el = pdoc.getElementById('big6-toast');
-    if (!el) {{
-      el = pdoc.createElement('div');
-      el.id = 'big6-toast';
-      el.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1f2937;color:#fff;' +
-        'padding:12px 18px;border-radius:10px;display:none;align-items:center;gap:14px;' +
-        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;' +
-        'z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.3);';
-      const span = pdoc.createElement('span');
-      span.textContent = 'Trait removed';
-      const btn = pdoc.createElement('button');
-      btn.textContent = 'Undo';
-      btn.style.cssText = 'background:rgba(255,255,255,.18);border:none;color:#fff;' +
-        'padding:5px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
-      btn.addEventListener('mouseover', () => btn.style.background = 'rgba(255,255,255,.3)');
-      btn.addEventListener('mouseout', () => btn.style.background = 'rgba(255,255,255,.18)');
-      el.append(span, btn);
-      pdoc.body.appendChild(el);
-    }}
-    return el;
-  }} catch(e) {{
-    // Sandboxed fallback — toast inside the iframe
-    let el = document.getElementById('big6-toast-fb');
-    if (!el) {{
-      el = document.createElement('div');
-      el.id = 'big6-toast-fb';
-      el.style.cssText = 'position:fixed;bottom:16px;right:16px;background:#1f2937;color:#fff;' +
-        'padding:12px 18px;border-radius:10px;display:none;align-items:center;gap:14px;' +
-        'font-family:-apple-system,sans-serif;font-size:14px;z-index:9999;' +
-        'box-shadow:0 4px 16px rgba(0,0,0,.3);';
-      const span = document.createElement('span');
-      span.textContent = 'Trait removed';
-      const btn = document.createElement('button');
-      btn.textContent = 'Undo';
-      btn.style.cssText = 'background:rgba(255,255,255,.18);border:none;color:#fff;' +
-        'padding:5px 12px;border-radius:6px;cursor:pointer;font-size:13px;';
-      el.append(span, btn);
-      document.body.appendChild(el);
-    }}
-    return el;
-  }}
-}}
-
-function moveUp(i) {{
-  if (i === 0 || !slots[i]) return;
-  [slots[i-1], slots[i]] = [slots[i], slots[i-1]];
-  save(); render();
-}}
-
-function moveDown(i) {{
-  const filled = slots.filter(Boolean).length;
-  if (i >= filled - 1 || !slots[i]) return;
-  [slots[i+1], slots[i]] = [slots[i], slots[i+1]];
-  save(); render();
-}}
-
-// ── Render ─────────────────────────────────────────────────────────────
 function render() {{
   const board = document.getElementById('board');
   board.innerHTML = '';
-  const display = preview || slots;
-  const filledCount = slots.filter(Boolean).length;
-
-  display.forEach((card, i) => {{
-    const row = mk('div', 'row');
-
-    // Left number
-    const num = mk('div', 'num'); num.textContent = i + 1;
-
-    // Slot
-    const slot = mk('div', 'slot'); slot.dataset.i = i;
-    const sk = mk('div', 'sk');
-    const lines = mk('div', 'sk-lines');
-    lines.append(skl('sk-a'), skl('sk-b'));
-    sk.append(lines); slot.append(sk);
-
-    if (card) {{
-      const c = mk('div', 'card');
-      c.style.background = card.color;
-      c.draggable = true;
-
-      const xb = mk('button', 'card-x'); xb.innerHTML = '&times;';
-      xb.addEventListener('click', e => {{ e.stopPropagation(); removeCard(i); }});
-
-      const nm = mk('div', 'card-name'); nm.textContent = card.label;
-      c.append(xb, nm);
-
-      c.addEventListener('dragstart', e => {{
-        dragSrc = i; e.dataTransfer.effectAllowed = 'move';
-        setTimeout(() => c.classList.add('dim'), 0);
-      }});
-      c.addEventListener('dragend', () => {{ dragSrc = null; preview = null; render(); }});
-      slot.append(c);
+  const visible = CHIPS.filter(c => !removed.has(c.id));
+  if (!visible.length) {{
+    const e = mk('div', 'empty');
+    e.textContent = 'Building a picture of you\u2026';
+    board.append(e); return;
+  }}
+  const wrap = mk('div', 'chips');
+  visible.forEach((c, i) => {{
+    const color = COLORS[i % COLORS.length];
+    const chip = mk('div', 'chip');
+    chip.style.borderLeftColor = color;
+    const dim = mk('div', 'chip-dim'); dim.textContent = c.dimension;
+    const lbl = mk('div', 'chip-label'); lbl.textContent = c.label;
+    chip.append(dim, lbl);
+    if (c.confidence > 0) {{
+      const bar = mk('div', 'chip-bar');
+      const fill = mk('div', 'chip-fill');
+      fill.style.background = color;
+      fill.style.width = Math.round(c.confidence * 100) + '%';
+      bar.append(fill); chip.append(bar);
     }}
-
-    slot.addEventListener('dragover', e => {{
-      e.preventDefault();
-      if (dragSrc === null || dragSrc === i) return;
-      slot.classList.add('over');
-      const next = [...slots];
-      [next[dragSrc], next[i]] = [next[i], next[dragSrc]];
-      if (JSON.stringify(preview) !== JSON.stringify(next)) {{ preview = next; render(); }}
-    }});
-    slot.addEventListener('dragleave', () => slot.classList.remove('over'));
-    slot.addEventListener('drop', e => {{
-      e.preventDefault();
-      if (dragSrc !== null && dragSrc !== i) {{
-        [slots[dragSrc], slots[i]] = [slots[i], slots[dragSrc]];
-        save();
-      }}
-      dragSrc = null; preview = null; render();
-    }});
-
-    // Right arrows (only for filled slots)
-    const arrows = mk('div', 'arrows');
-    if (card && filledCount > 1) {{
-      const upBtn = mk('button', 'arr');
-      upBtn.innerHTML = '&#8593;';
-      upBtn.title = 'Move up';
-      if (i === 0) upBtn.classList.add('hidden');
-      upBtn.addEventListener('click', () => moveUp(i));
-
-      const dnBtn = mk('button', 'arr');
-      dnBtn.innerHTML = '&#8595;';
-      dnBtn.title = 'Move down';
-      if (i === filledCount - 1) dnBtn.classList.add('hidden');
-      dnBtn.addEventListener('click', () => moveDown(i));
-
-      arrows.append(upBtn, dnBtn);
-    }}
-
-    row.append(num, slot, arrows);
-    board.append(row);
+    const xb = mk('button', 'chip-x'); xb.innerHTML = '&times;';
+    xb.addEventListener('click', () => removeChip(c.id));
+    chip.append(xb);
+    wrap.append(chip);
   }});
+  board.append(wrap);
 }}
-
-function mk(tag, cls) {{ const e = document.createElement(tag); if (cls) e.className = cls; return e; }}
-function skl(cls) {{ const l = mk('div', 'sk-line'); l.classList.add(cls); return l; }}
-
 render();
 </script></body></html>"""
 
 
-def build_big6_traits():
-    portrait = st.session_state.get("user_portrait", {})
-    if not portrait:
-        return []
-    traits = list(portrait.get("personality_traits", []))
-    for v in portrait.get("values", []):
-        if v not in traits and len(traits) < 6:
-            traits.append(v)
-    return traits[:6]
-
 
 def render_big6_panel():
-    traits = build_big6_traits()
+    chips = rank_live_traits()
     html = _BIG6_HTML.format(
         colors=json.dumps(CARD_COLORS),
-        traits=json.dumps(traits),
+        chips=json.dumps(chips),
     )
-    components.html(html, height=900, scrolling=False)
+    components.html(html, height=300, scrolling=False)
 
 
 _AB_PROFILE_HTML = """<!DOCTYPE html>
@@ -2271,6 +2321,208 @@ def main():
         render_chat_content()
 
 
+def render_priority_ranking():
+    """Inline chat widget: user sees and reorders match priorities before clarification starts."""
+    priorities = st.session_state.match_priorities
+    n = len(priorities)
+
+    st.markdown(
+        "Based on everything you've shared, here's what I think matters most to you "
+        "in this connection. **Use ↑ ↓ to put them in your order** — #1 is what you "
+        "value most. This ranking shapes your profile directly."
+    )
+    st.markdown("")
+
+    for i, p in enumerate(priorities):
+        col_num, col_card, col_up, col_dn = st.columns([0.08, 2.9, 0.2, 0.2])
+        with col_num:
+            st.markdown(
+                f"<p style='margin:0;padding:14px 0 0;font-size:14px;"
+                f"font-weight:700;color:#9ca3af;text-align:right'>{i + 1}</p>",
+                unsafe_allow_html=True,
+            )
+        with col_card:
+            color = CARD_COLORS[i % len(CARD_COLORS)]
+            reason = p.get("reason", "")
+            reason_html = (
+                f"<div style='font-size:11px;color:#6b7280;margin-top:5px;"
+                f"line-height:1.45;padding:0 2px'>{reason}</div>"
+                if reason else ""
+            )
+            st.markdown(
+                f"<div style='background:{color};color:#fff;border-radius:8px;"
+                f"padding:9px 14px;font-weight:600;font-size:13px;"
+                f"text-shadow:0 1px 2px rgba(0,0,0,.2)'>{p['label']}</div>"
+                + reason_html,
+                unsafe_allow_html=True,
+            )
+        with col_up:
+            if i > 0 and st.button("↑", key=f"prio_up_{i}"):
+                priorities[i], priorities[i - 1] = priorities[i - 1], priorities[i]
+                st.session_state.match_priorities = priorities
+                st.rerun()
+        with col_dn:
+            if i < n - 1 and st.button("↓", key=f"prio_dn_{i}"):
+                priorities[i], priorities[i + 1] = priorities[i + 1], priorities[i]
+                st.session_state.match_priorities = priorities
+                st.rerun()
+
+    st.markdown("")
+    if st.button("This is my order — let's continue", type="primary"):
+        st.session_state.awaiting_priority_ranking = False
+        advance_stage()
+        start_proposition_stage(priorities_confirmed=True)
+        st.rerun()
+
+
+def render_looking_for_ranking():
+    """Inline chat widget: user reorders what they are looking for before deal breakers."""
+    items = st.session_state.what_looking_for
+    n = len(items)
+
+    st.markdown(
+        "Here's what I think you're looking for in this connection. "
+        "**Use ↑ ↓ to put them in your order** — #1 matters most to you. "
+        "This shapes how your profile is written."
+    )
+    st.markdown("")
+
+    for i, p in enumerate(items):
+        col_num, col_card, col_up, col_dn = st.columns([0.08, 2.9, 0.2, 0.2])
+        with col_num:
+            st.markdown(
+                f"<p style='margin:0;padding:14px 0 0;font-size:14px;"
+                f"font-weight:700;color:#9ca3af;text-align:right'>{i + 1}</p>",
+                unsafe_allow_html=True,
+            )
+        with col_card:
+            color = CARD_COLORS[i % len(CARD_COLORS)]
+            reason = p.get("reason", "")
+            reason_html = (
+                f"<div style='font-size:11px;color:#6b7280;margin-top:5px;"
+                f"line-height:1.45;padding:0 2px'>{reason}</div>"
+                if reason else ""
+            )
+            st.markdown(
+                f"<div style='background:{color};color:#fff;border-radius:8px;"
+                f"padding:9px 14px;font-weight:600;font-size:13px;"
+                f"text-shadow:0 1px 2px rgba(0,0,0,.2)'>{p['label']}</div>"
+                + reason_html,
+                unsafe_allow_html=True,
+            )
+        with col_up:
+            if i > 0 and st.button("↑", key=f"lf_up_{i}"):
+                items[i], items[i - 1] = items[i - 1], items[i]
+                st.session_state.what_looking_for = items
+                st.rerun()
+        with col_dn:
+            if i < n - 1 and st.button("↓", key=f"lf_dn_{i}"):
+                items[i], items[i + 1] = items[i + 1], items[i]
+                st.session_state.what_looking_for = items
+                st.rerun()
+
+    st.markdown("")
+    if st.button("Looks right — let's continue", type="primary", key="confirm_looking_for"):
+        st.session_state.awaiting_looking_for_ranking = False
+
+        with st.spinner("Identifying your deal breakers..."):
+            _generate_deal_breaker_items(
+                st.session_state.user_portrait,
+                st.session_state.relationship_type,
+            )
+        st.session_state.awaiting_deal_breaker_ranking = True
+        st.rerun()
+
+
+def render_deal_breaker_ranking():
+    """Inline chat widget: user reviews and reorders deal breakers before moving to clarification."""
+    items = st.session_state.deal_breaker_items
+    n = len(items)
+
+    st.markdown(
+        "Based on everything you've shared, here are the things that would be genuine deal breakers for you. "
+        "**Use ↑ ↓ to reorder** — #1 is your most non-negotiable."
+    )
+    st.markdown("")
+
+    for i, p in enumerate(items):
+        col_num, col_card, col_up, col_dn = st.columns([0.08, 2.9, 0.2, 0.2])
+        with col_num:
+            st.markdown(
+                f"<p style='margin:0;padding:14px 0 0;font-size:14px;"
+                f"font-weight:700;color:#9ca3af;text-align:right'>{i + 1}</p>",
+                unsafe_allow_html=True,
+            )
+        with col_card:
+            color = CARD_COLORS[i % len(CARD_COLORS)]
+            reason = p.get("reason", "")
+            reason_html = (
+                f"<div style='font-size:11px;color:#6b7280;margin-top:5px;"
+                f"line-height:1.45;padding:0 2px'>{reason}</div>"
+                if reason else ""
+            )
+            st.markdown(
+                f"<div style='background:{color};color:#fff;border-radius:8px;"
+                f"padding:9px 14px;font-weight:600;font-size:13px;"
+                f"text-shadow:0 1px 2px rgba(0,0,0,.2)'>{p['label']}</div>"
+                + reason_html,
+                unsafe_allow_html=True,
+            )
+        with col_up:
+            if i > 0 and st.button("↑", key=f"db_up_{i}"):
+                items[i], items[i - 1] = items[i - 1], items[i]
+                st.session_state.deal_breaker_items = items
+                st.rerun()
+        with col_dn:
+            if i < n - 1 and st.button("↓", key=f"db_dn_{i}"):
+                items[i], items[i + 1] = items[i + 1], items[i]
+                st.session_state.deal_breaker_items = items
+                st.rerun()
+
+    st.markdown("")
+    if st.button("These are right — let's build my profile", type="primary", key="confirm_deal_breakers"):
+        st.session_state.awaiting_deal_breaker_ranking = False
+        st.session_state.deal_breakers_confirmed = True
+
+        # Build proposition_data directly from session state (no extra LLM call needed)
+        portrait = st.session_state.user_portrait
+        trait_parts = []
+        for field in ("personality_traits", "values", "social_energy", "thinking_style", "decision_making"):
+            val = portrait.get(field, "")
+            if isinstance(val, list):
+                trait_parts.extend(val[:3])
+            elif val:
+                trait_parts.append(val)
+        trait_summary = ". ".join(trait_parts[:6])
+
+        st.session_state.proposition_data = {
+            "relationship_type": st.session_state.relationship_type,
+            "user_trait_summary": trait_summary,
+            "selected_dimensions": [
+                {
+                    "category": "Match Priorities",
+                    "ranked_items": [
+                        {"item": p["label"], "reasoning": p.get("reason", "")}
+                        for p in st.session_state.match_priorities
+                    ],
+                },
+                {
+                    "category": "What You're Looking For",
+                    "ranked_items": [
+                        {"item": p["label"], "reasoning": p.get("reason", "")}
+                        for p in st.session_state.what_looking_for
+                    ],
+                },
+            ],
+            "deal_breakers": [p["label"] for p in st.session_state.deal_breaker_items],
+        }
+
+        confirmed_msg = "Great — I have everything I need. Let's build your profile."
+        st.session_state.messages.append({"role": "assistant", "content": confirmed_msg})
+
+        advance_stage()
+        start_tension_stage()
+        st.rerun()
 def render_profile_comparison():
     """Side-by-side profile candidates with continue buttons (profile stage)."""
     st.divider()
@@ -2354,7 +2606,9 @@ def render_chat_content():
             st.rerun()
 
     elif st.session_state.stage == "about_you":
-        if st.session_state.get("awaiting_summary_confirmation", False):
+        if st.session_state.get("awaiting_priority_ranking", False):
+            render_priority_ranking()
+        elif st.session_state.get("awaiting_summary_confirmation", False):
             if user_input := st.chat_input("Your response..."):
                 with st.chat_message("user"):
                     st.markdown(user_input)
@@ -2373,19 +2627,25 @@ def render_chat_content():
                     ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
                     st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
                     st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                    # Progressively surface traits in Big 6 as answers come in
-                    partial = extract_partial_traits(st.session_state.stage_messages)
-                    if partial:
-                        existing = st.session_state.user_portrait.get("personality_traits", [])
-                        merged = list(dict.fromkeys(existing + partial))
-                        st.session_state.user_portrait["personality_traits"] = merged[:6]
+                    # Progressively surface traits in Big 6 as answers come in (every 2nd turn)
+                    user_turn_count = sum(
+                        1 for m in st.session_state.stage_messages if m["role"] == "user"
+                    )
+                    if user_turn_count % 2 == 0 or user_turn_count <= 2:
+                        new_live = extract_live_traits(st.session_state.stage_messages)
+                        if new_live:
+                            _merge_live_traits(new_live)
                     if check_stage_completion("about_you", ai_response):
                         st.session_state.messages.append({"role": "assistant", "content": "Does this capture you well? Feel free to correct anything or add something important I missed."})
                         st.session_state.awaiting_summary_confirmation = True
                 st.rerun()
 
     elif st.session_state.stage == "proposition":
-        if user_input := st.chat_input("Type 'yes' to confirm, or suggest changes..."):
+        if st.session_state.get("awaiting_looking_for_ranking", False):
+            render_looking_for_ranking()
+        elif st.session_state.get("awaiting_deal_breaker_ranking", False):
+            render_deal_breaker_ranking()
+        elif user_input := st.chat_input("Type 'yes' to confirm, or suggest changes..."):
             with st.chat_message("user"):
                 st.markdown(user_input)
             handle_proposition(user_input)
@@ -2436,6 +2696,45 @@ def render_chat_content():
                     "Start with one line only: Meet [FirstName], a [Age] year old [Gender]. (invent a plausible first name and age). "
                 )
 
+                # Build comprehensive context from all confirmed rankings + about_you traits
+                priorities_block = "\n".join(
+                    f"{i+1}. {p['label']}" + (f" — {p.get('reason','')}" if p.get("reason") else "")
+                    for i, p in enumerate(st.session_state.match_priorities)
+                ) or "(not set)"
+                looking_for_block = "\n".join(
+                    f"{i+1}. {p['label']}" + (f" — {p.get('reason','')}" if p.get("reason") else "")
+                    for i, p in enumerate(st.session_state.what_looking_for)
+                ) or "(not set)"
+                deal_breakers_block = "\n".join(
+                    f"- {p['label']}" + (f" — {p.get('reason','')}" if p.get("reason") else "")
+                    for p in st.session_state.deal_breaker_items
+                ) or "(not set)"
+                live_traits_block = "\n".join(
+                    f"- {v['label']}: {int(v['confidence'] * 100)}% confidence"
+                    for v in st.session_state.get("live_traits", {}).values()
+                ) or "(not captured)"
+
+                full_context = (
+                    f"USER PORTRAIT (who they are):\n{json.dumps(st.session_state.user_portrait, indent=2)}\n\n"
+                    f"ABOUT YOU — Personality dimensions observed during conversation:\n{live_traits_block}\n\n"
+                    f"MATCH PRIORITIES (what they value most in a partner, ranked #1 = most important):\n{priorities_block}\n\n"
+                    f"WHAT THEY'RE LOOKING FOR (specific partner qualities, ranked #1 = most important):\n{looking_for_block}\n\n"
+                    f"DEAL BREAKERS (must NOT appear anywhere in the profile):\n{deal_breakers_block}"
+                )
+
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Generate a complete profile using all of the following confirmed information:\n\n"
+                        f"{full_context}\n\n"
+                        f"{name_instruction}"
+                        "Then a blank line, then the section headers and body. "
+                        f"Select appropriate sections for this relationship type. "
+                        f"The top-ranked match priorities and looking-for qualities should come through most prominently. "
+                        f"The user's personality traits from 'About You' should be reflected in how the ideal person is described. "
+                        f"End with a 'Why This Person Fits You' section that ties the profile back to the user's portrait. "
+                        f"The profile must EXCLUDE all deal breakers entirely."
+                    )
                 user_content = (
                     f"Generate a complete profile based on these confirmed priorities: "
                     f"{json.dumps(st.session_state.proposition_data, indent=2)}.\n"
