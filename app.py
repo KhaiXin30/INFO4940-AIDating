@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 MODEL_PATH = "llama-3.1-8b.gguf"
 TEST_MODE = True  # Set to False to use the real model
 
-# 24 mock LLM responses covering the full happy path + trust recovery.
+# 25 mock LLM responses covering the full happy path + trust recovery.
 # Ordered to match the call sequence:
 #   R0-R4:  about_you questions (4 Qs + SUMMARY)
 #   R5:     extract_user_portrait JSON (hidden)
@@ -18,7 +18,8 @@ TEST_MODE = True  # Set to False to use the real model
 #   R9:     extract_proposition JSON (hidden)
 #   R10-R12: tension clarifying questions
 #   R13:    tension wrap-up
-#   R14:    profile generation
+#   R14:    profile generation (Option A)
+#   R14b:   profile generation (Option B — variant)
 #   R15-R16: refinement updates
 #   R17-R18: _llm_classify_confirmation fallbacks ("CONFIRM")
 #   R19:    error1 recovery — corrected model summary
@@ -57,6 +58,8 @@ _TEST_LLM_RESPONSES = [
     "That's a really clear picture — you want emotional depth and consistency to coexist, and you'd rather be challenged gently from within a stable foundation than pulled into constant change. That all fits together well.",
     # R14 — profile generation
     "**Meet Soren, a 31 year old man.**\n\n### Personality & Core Traits\nSoren is the kind of person who actually listens — not politely, but with the kind of attention that makes you feel like the most important person in the room. He's unhurried and deliberate, someone who thinks before he speaks and means what he says. He has a dry, quiet sense of humor that surfaces when you least expect it. He's not trying to impress anyone; he's just genuinely himself.\n\n### Communication Style\nSoren doesn't fill silence for the sake of it. He'll sit with you in a quiet moment without reaching for his phone. When he does speak, it tends to be worth hearing — considered, specific, and warm. He's honest without being blunt, and he knows how to name what he's feeling without making it dramatic.\n\n### Emotional Style & Love Languages\nHis primary love language is quality time — undistracted, unhurried presence. He also notices the small things: he'll remember what you said you were anxious about last week and ask how it went. He's not performative with affection, but the consistency of it is unmistakable.\n\n### A Typical Day in His Life\nSoren starts his mornings slowly — coffee, reading, thirty minutes without a screen. He works in landscape architecture and spends his afternoons between a desk and project sites. His evenings are quiet: cooking something from scratch, a long walk, or a film he actually wants to talk about afterward.\n\n### Conflict Style\nHe doesn't avoid hard conversations, but he doesn't rush into them either. He takes a breath, waits until he can speak from understanding rather than reaction, and leads with curiosity — what happened, what did you need, what can we do differently.\n\n### Backstory\nSoren grew up in a mid-sized city, the eldest of three. He was close to his mother, who was a high school art teacher, and learned early that paying attention to people was its own kind of love. He had one long relationship in his late twenties that ended amicably when they realized they wanted different versions of the future.\n\n### Why This Person Fits You\nSoren offers exactly the combination you described: emotional depth within a stable, consistent presence. He won't overwhelm you with intensity, but he won't give you surface level either. His pace matches yours — unhurried, intentional, showing up the same way every time.",
+    # R14b — profile generation (variant B — different creative angle)
+    "**Meet Lina, a 28 year old woman.**\n\n### Personality & Core Traits\nLina is perceptive in a way that catches you off guard — she'll notice the thing you didn't say and ask about it three days later. She's calm without being passive, warm without being overwhelming. She has a quiet confidence and a habit of collecting odd hobbies (currently: bookbinding and fermenting hot sauce).\n\n### Communication Style\nShe speaks carefully but not cautiously — she just doesn't waste words. She's the person who sends one perfect text instead of twelve. In person, she listens first, then responds with something that shows she was actually paying attention.\n\n### Emotional Style & Love Languages\nLina's love language is acts of care — she shows up with soup when you're sick, fixes the shelf you mentioned was broken, remembers your mother's birthday. She's emotionally steady and expressive in action more than words, though when she does say something vulnerable, she means every syllable.\n\n### A Typical Day in Her Life\nMornings start early with tea and journaling. She works as a UX researcher, spending her days listening to people talk about how they use things. Evenings are for cooking (always from scratch, always with music on), a long phone call with her sister, or reading on the couch with her cat.\n\n### Conflict Style\nLina needs a beat before she engages in conflict — not to avoid it, but to make sure she's responding to what's actually happening. She's direct when she's ready, and she doesn't hold grudges. She'd rather resolve it fully once than let it simmer.\n\n### Backstory\nLina grew up in a bilingual household, the youngest of two. Her parents ran a small bakery together, which taught her that love often looks like working side by side in comfortable silence. She moved cities once for a fresh start and built a close-knit circle from scratch.\n\n### Why This Person Fits You\nLina mirrors your depth and intentionality but brings a different texture — more action-oriented warmth, a groundedness that expresses itself through doing rather than saying. Where you're reflective, she's responsive. Together, the balance would feel effortless.",
     # R15 — refinement update 1
     "**Meet Soren, a 31 year old man.**\n\n### Personality & Core Traits\nSoren is the kind of person who actually listens — not politely, but with the kind of attention that makes you feel like the most important person in the room. He's unhurried and deliberate, someone who thinks before he speaks and means what he says. He has a dry, quiet sense of humor that surfaces when you least expect it.\n\n### Communication Style\nSoren doesn't fill silence for the sake of it. When he does speak, it tends to be worth hearing — considered, specific, and warm.\n\n### Emotional Style & Love Languages\nHis primary love language is quality time — undistracted, unhurried presence. He notices the small things and shows up the same way every time.\n\n### A Typical Day in His Life\nSoren starts his mornings with a long run before the city wakes up, then coffee and reading. He works in landscape architecture. His evenings are quiet: cooking something from scratch, a long walk, or a film he actually wants to talk about afterward. On weekends you'd find him at the climbing gym or on a trail he hasn't tried yet.\n\n### Conflict Style\nHe doesn't avoid hard conversations. He takes a breath, waits until he can speak from understanding rather than reaction, and leads with curiosity.\n\n### Backstory\nSoren grew up in a mid-sized city, the eldest of three, close to his mother who was a high school art teacher.\n\n### Why This Person Fits You\nSoren offers emotional depth within a stable, consistent presence. His active lifestyle adds energy without pressure to change.\n\n*Updated: Added outdoor and climbing interests to A Typical Day. You might also consider personalizing his career or adding a small quirk.*",
     # R16 — refinement update 2
@@ -689,6 +692,50 @@ PROFILE_SYSTEM_PROMPT = (
     f"{TRUST_RECOVERY_INSTRUCTIONS}"
 )
 
+PROFILE_VARIANT_SYSTEM_PROMPT = (
+    "You are collaboratively building a profile of the user's ideal {relationship_type} "
+    "based on everything you know about them.\n\n"
+    "IMPORTANT: Another version of this profile is being generated at the same time. "
+    "Your job is to take a DIFFERENT creative angle. Vary the name, gender or age, "
+    "backstory, career, and day-to-day details while staying equally faithful to the "
+    "user's confirmed priorities and deal breakers. The personality fit should be just "
+    "as strong, but the surface-level texture should feel like a genuinely different person.\n\n"
+    "The user's trait summary: {trait_summary}\n\n"
+    "Their confirmed priorities:\n{proposition_json}\n\n"
+    "SECTION SELECTION — Choose the sections that make sense for this relationship type. "
+    "Here are your options (pick 5-8):\n\n"
+    "FOR ANY RELATIONSHIP TYPE:\n"
+    "- Personality & Core Traits\n"
+    "- Communication Style\n"
+    "- A Typical Interaction (what spending time together looks like)\n"
+    "- Why This Person Fits You\n\n"
+    "FOR ROMANTIC / CLOSE EMOTIONAL RELATIONSHIPS:\n"
+    "- Physical Description\n"
+    "- Emotional Style & Love Languages\n"
+    "- Conflict Style\n"
+    "- Backstory\n"
+    "- A Typical Day in Their Life\n\n"
+    "FOR ACTIVITY / CONTEXT-BASED RELATIONSHIPS:\n"
+    "- Play Style or Work Style\n"
+    "- Skill Level & Approach\n"
+    "- Scheduling & Reliability\n"
+    "- Growth Orientation\n\n"
+    "STRICT RULES:\n"
+    "- The **very first line** of the profile (before any section headers) must be exactly this pattern: "
+    "**Meet [FirstName].** — invent one plausible first name at random (vary style/culture). Add age in there too"
+    "If the user already gave a name in their ideas, use that first name instead. "
+    "Do not use the user's own name or a famous real person's name unless they asked.\n"
+    "- After that opening line, add a blank line, then use clear headers for each section (you may still "
+    "- Write in warm, engaging prose. Use a clear header for each section.\n"
+    "- Never show JSON to the user.\n"
+    "- The top-ranked priorities from the proposition should come through clearly in the profile.\n"
+    "- The profile must NOT include any of the user's stated deal breakers.\n"
+    "- Keep the profile grounded and specific — this should feel like a real person, not a wish list.\n"
+    "- End with a short 'Why This Person Fits You' section that ties the profile back to "
+    "the user's personality and needs.\n\n"
+    f"{TRUST_RECOVERY_INSTRUCTIONS}"
+)
+
 REFINEMENT_SYSTEM_PROMPT = (
     "You are helping the user refine a {relationship_type} profile through natural conversation. "
     "When the user gives feedback, update the profile and reprint it in full — same warm prose format, no JSON. "
@@ -1017,6 +1064,12 @@ def init_session_state():
         st.session_state.deal_breakers_confirmed = False
     if "big6_traits" not in st.session_state:
         st.session_state.big6_traits = []
+    if "profile_a" not in st.session_state:
+        st.session_state.profile_a = ""
+    if "profile_b" not in st.session_state:
+        st.session_state.profile_b = ""
+    if "awaiting_profile_choice" not in st.session_state:
+        st.session_state.awaiting_profile_choice = False
     if "test_llm_idx" not in st.session_state:
         st.session_state.test_llm_idx = 0
 
@@ -1039,6 +1092,9 @@ def advance_stage():
         st.session_state.current_category_index = 0
         st.session_state.awaiting_deal_breakers = False
         st.session_state.deal_breakers_confirmed = False
+        st.session_state.profile_a = ""
+        st.session_state.profile_b = ""
+        st.session_state.awaiting_profile_choice = False
 
 # -------------------------------
 # STAGE HANDLERS
@@ -1769,6 +1825,104 @@ def render_big6_panel():
     components.html(html, height=900, scrolling=False)
 
 
+_AB_PROFILE_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:transparent;padding:0}}
+
+.ab-header{{font-size:15px;color:#374151;margin-bottom:16px;line-height:1.5}}
+
+.ab-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
+
+.ab-card{{
+  border:2px solid #e5e7eb;border-radius:14px;padding:20px;
+  cursor:pointer;background:#fff;transition:border-color .15s, box-shadow .15s;
+  position:relative;
+}}
+.ab-card:hover{{border-color:#d1d5db;box-shadow:0 2px 8px rgba(0,0,0,.06)}}
+.ab-card.selected{{border-color:#f43f5e;box-shadow:0 0 0 3px rgba(244,63,94,.15)}}
+
+.ab-card-label{{
+  font-size:13px;font-weight:600;color:#f43f5e;
+  margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px
+}}
+
+.ab-card-body{{font-size:14px;color:#1f2937;line-height:1.65}}
+.ab-card-body h3{{font-size:15px;font-weight:600;margin:14px 0 6px;color:#111827}}
+.ab-card-body p{{margin:0 0 10px}}
+.ab-card-body strong{{font-weight:600}}
+
+.ab-btn-row{{display:flex;justify-content:center;margin-top:18px}}
+.ab-btn{{
+  background:#f43f5e;color:#fff;border:none;border-radius:9999px;
+  padding:10px 32px;font-size:14px;font-weight:600;cursor:pointer;
+  transition:background .15s,transform .08s;
+}}
+.ab-btn:hover{{background:#e11d48}}
+.ab-btn:active{{transform:scale(.97)}}
+.ab-btn:disabled{{background:#d1d5db;cursor:default;transform:none}}
+</style></head><body>
+
+<p class="ab-header">I generated two different profiles based on your priorities.<br>
+Click one to select it, then confirm your choice.</p>
+
+<div class="ab-grid">
+  <div class="ab-card" id="card-a" onclick="pick('A')">
+    <div class="ab-card-label">Option A</div>
+    <div class="ab-card-body" id="body-a"></div>
+  </div>
+  <div class="ab-card" id="card-b" onclick="pick('B')">
+    <div class="ab-card-label">Option B</div>
+    <div class="ab-card-body" id="body-b"></div>
+  </div>
+</div>
+
+<div class="ab-btn-row">
+  <button class="ab-btn" id="ab-submit" disabled onclick="submit()">Select a profile</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+const profileA = {profile_a_json};
+const profileB = {profile_b_json};
+let selected = null;
+
+document.getElementById('body-a').innerHTML = marked.parse(profileA);
+document.getElementById('body-b').innerHTML = marked.parse(profileB);
+
+function pick(choice) {{
+  selected = choice;
+  document.getElementById('card-a').classList.toggle('selected', choice === 'A');
+  document.getElementById('card-b').classList.toggle('selected', choice === 'B');
+  const btn = document.getElementById('ab-submit');
+  btn.disabled = false;
+  btn.textContent = 'Choose Option ' + choice;
+}}
+
+function submit() {{
+  if (!selected) return;
+  // Navigate parent to same page with query param — triggers Streamlit rerun
+  const url = new URL(window.parent.location);
+  url.searchParams.set('profile_choice', selected);
+  window.parent.location.href = url.toString();
+}}
+</script>
+</body></html>"""
+
+
+def render_profile_choice():
+    """Render the AB profile comparison as an HTML component inside the chat."""
+    html = _AB_PROFILE_HTML.format(
+        profile_a_json=json.dumps(st.session_state.profile_a),
+        profile_b_json=json.dumps(st.session_state.profile_b),
+    )
+    # Estimate height: roughly 1 line per 80 chars, 24px per line, plus padding
+    max_len = max(len(st.session_state.profile_a), len(st.session_state.profile_b))
+    est_height = max(600, min(1600, int(max_len / 80 * 24) + 200))
+    components.html(html, height=est_height, scrolling=True)
+
+
 def render_autoscroll():
         components.html(
                 """
@@ -2104,7 +2258,23 @@ def render_chat_content():
             st.rerun()
 
     elif st.session_state.stage == "profile":
-        if st.session_state.awaiting_profile_ideas:
+        if st.session_state.awaiting_profile_choice:
+            # Check if the user already made a choice via the HTML component
+            choice = st.query_params.get("profile_choice")
+            if choice in ("A", "B"):
+                st.query_params.clear()
+                chosen = st.session_state.profile_a if choice == "A" else st.session_state.profile_b
+                st.session_state.profile_text = chosen
+                st.session_state.frozen_profile = chosen
+                st.session_state.messages.append({"role": "assistant", "content": chosen})
+                st.session_state.awaiting_profile_choice = False
+                advance_stage()
+                start_refinement_stage()
+                st.rerun()
+            # Render the side-by-side AB comparison as an HTML component
+            render_profile_choice()
+
+        elif st.session_state.awaiting_profile_ideas:
             if user_input := st.chat_input("Your response..."):
                 st.session_state.messages.append({"role": "user", "content": user_input})
                 st.session_state.awaiting_profile_ideas = False
@@ -2115,16 +2285,7 @@ def render_chat_content():
                 trait_summary = st.session_state.proposition_data.get("user_trait_summary", "")
                 proposition_json = json.dumps(st.session_state.proposition_data.get("selected_dimensions", []), indent=2)
 
-                profile_prompt = PROFILE_SYSTEM_PROMPT.format(
-                    relationship_type=relationship_type,
-                    trait_summary=trait_summary,
-                    proposition_json=proposition_json
-                )
-                messages = [{"role": "system", "content": profile_prompt}]
-
                 has_user_ideas = user_input.lower() not in {"surprise me", "surprise", "no", "nope", ""}
-                if has_user_ideas:
-                    messages.append({"role": "user", "content": f"The user wants to include these ideas: {user_input}"})
 
                 name_instruction = (
                     "Start with one line only: Meet [FirstName], a [Age] year old [Gender]. "
@@ -2134,28 +2295,46 @@ def render_chat_content():
                     "Start with one line only: Meet [FirstName], a [Age] year old [Gender]. (invent a plausible first name and age). "
                 )
 
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        f"Generate a complete profile based on these confirmed priorities: "
-                        f"{json.dumps(st.session_state.proposition_data, indent=2)}.\n"
-                        f"{name_instruction}"
-                        "Then a blank line, then the section headers and body. "
-                        f"Select appropriate sections for this relationship type. "
-                        f"End with a 'Why This Person Fits You' section. "
-                        f"Reflect the ranked priorities and exclude all deal breakers."
-                    )
-                })
+                user_content = (
+                    f"Generate a complete profile based on these confirmed priorities: "
+                    f"{json.dumps(st.session_state.proposition_data, indent=2)}.\n"
+                    f"{name_instruction}"
+                    "Then a blank line, then the section headers and body. "
+                    f"Select appropriate sections for this relationship type. "
+                    f"End with a 'Why This Person Fits You' section. "
+                    f"Reflect the ranked priorities and exclude all deal breakers."
+                )
 
-                with st.spinner("Generating your profile..."):
-                    ai_response = call_llm(messages, max_tokens=3000)
+                # Build messages for Profile A (original prompt)
+                profile_prompt_a = PROFILE_SYSTEM_PROMPT.format(
+                    relationship_type=relationship_type,
+                    trait_summary=trait_summary,
+                    proposition_json=proposition_json
+                )
+                messages_a = [{"role": "system", "content": profile_prompt_a}]
+                if has_user_ideas:
+                    messages_a.append({"role": "user", "content": f"The user wants to include these ideas: {user_input}"})
+                messages_a.append({"role": "user", "content": user_content})
 
-                if ai_response:
-                    st.session_state.profile_text = ai_response
-                    st.session_state.frozen_profile = ai_response
-                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                    advance_stage()
-                    start_refinement_stage()
+                # Build messages for Profile B (variant prompt)
+                profile_prompt_b = PROFILE_VARIANT_SYSTEM_PROMPT.format(
+                    relationship_type=relationship_type,
+                    trait_summary=trait_summary,
+                    proposition_json=proposition_json
+                )
+                messages_b = [{"role": "system", "content": profile_prompt_b}]
+                if has_user_ideas:
+                    messages_b.append({"role": "user", "content": f"The user wants to include these ideas: {user_input}"})
+                messages_b.append({"role": "user", "content": user_content})
+
+                with st.spinner("Generating two profiles for you to compare..."):
+                    response_a = call_llm(messages_a, max_tokens=3000)
+                    response_b = call_llm(messages_b, max_tokens=3000)
+
+                if response_a and response_b:
+                    st.session_state.profile_a = response_a
+                    st.session_state.profile_b = response_b
+                    st.session_state.awaiting_profile_choice = True
                 st.rerun()
 
     elif st.session_state.stage == "refinement":
