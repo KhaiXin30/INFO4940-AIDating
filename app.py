@@ -80,6 +80,66 @@ _TEST_LLM_RESPONSES = [
     "**Meet Soren, a 31 year old man.**\n\nThe profile is updated with your final note. I think this version feels complete — specific enough to feel real, and grounded in everything you shared.\n\n*No further changes suggested — this feels like a solid final version.*",
 ]
 
+# First profile for TEST_MODE dual-profile step — fixed full profile (do not use call_llm here:
+# sequential index is often not exactly R14, which shows R13 tension wrap-up in Profile A by mistake).
+_PROFILE_MOCK_VARIANT_A = (
+    "**Meet Soren, a 31 year old man.**\n\n### Personality & Core Traits\n"
+    "Soren is the kind of person who actually listens — not politely, but with the kind of attention that makes "
+    "you feel like the most important person in the room. He's unhurried and deliberate, someone who thinks "
+    "before he speaks and means what he says. He has a dry, quiet sense of humor that surfaces when you least "
+    "expect it. He's not trying to impress anyone; he's just genuinely himself.\n\n"
+    "### Communication Style\n"
+    "Soren doesn't fill silence for the sake of it. He'll sit with you in a quiet moment without reaching for his "
+    "phone. When he does speak, it tends to be worth hearing — considered, specific, and warm. He's honest without "
+    "being blunt, and he knows how to name what he's feeling without making it dramatic.\n\n"
+    "### Emotional Style & Love Languages\n"
+    "His primary love language is quality time — undistracted, unhurried presence. He also notices the small things: "
+    "he'll remember what you said you were anxious about last week and ask how it went. He's not performative with "
+    "affection, but the consistency of it is unmistakable.\n\n"
+    "### A Typical Day in His Life\n"
+    "Soren starts his mornings slowly — coffee, reading, thirty minutes without a screen. He works in landscape "
+    "architecture and spends his afternoons between a desk and project sites. His evenings are quiet: cooking "
+    "something from scratch, a long walk, or a film he actually wants to talk about afterward.\n\n"
+    "### Conflict Style\n"
+    "He doesn't avoid hard conversations, but he doesn't rush into them either. He takes a breath, waits until he "
+    "can speak from understanding rather than reaction, and leads with curiosity — what happened, what did you need, "
+    "what can we do differently.\n\n"
+    "### Backstory\n"
+    "Soren grew up in a mid-sized city, the eldest of three. He was close to his mother, who was a high school art "
+    "teacher, and learned early that paying attention to people was its own kind of love. He had one long relationship "
+    "in his late twenties that ended amicably when they realized they wanted different versions of the future.\n\n"
+    "### Why This Person Fits You\n"
+    "Soren offers exactly the combination you described: emotional depth within a stable, consistent presence. He won't "
+    "overwhelm you with intensity, but he won't give you surface level either. His pace matches yours — unhurried, "
+    "intentional, showing up the same way every time."
+)
+
+# Second profile for TEST_MODE only — keeps sequential mock index aligned with R15+ (refinement).
+_PROFILE_MOCK_VARIANT_B = (
+    "**Meet Mira, a 29 year old woman.**\n\n### Personality & Core Traits\n"
+    "Mira is quietly intense in the best way — she cares about things deeply but wears it lightly. "
+    "She's the friend who remembers the book you mentioned once and shows up with it six months later. "
+    "She's observant without being judgmental, and she has a habit of asking the one question that unlocks the real conversation.\n\n"
+    "### Communication Style\n"
+    "She texts in full sentences, uses voice memos when tone matters, and would rather have a hard conversation "
+    "at the wrong time than a polite one that goes nowhere. She listens like it's a skill she's practiced on purpose.\n\n"
+    "### Emotional Style & Love Languages\n"
+    "Words of affirmation and quality time split the lead — she needs to hear that she's seen, and she needs "
+    "unhurried time together without an agenda. Physical affection is present but never performative.\n\n"
+    "### A Typical Interaction\n"
+    "You'd meet for a walk first, talk through what you're both carrying that week, then maybe cook together "
+    "or read side by side — parallel presence that still feels connected.\n\n"
+    "### Conflict Style\n"
+    "She names what's happening early, stays curious about your experience, and doesn't keep score — but she "
+    "does need repair to feel real, not just moving on.\n\n"
+    "### Backstory\n"
+    "Soren grew up in a mid-sized city, the eldest of three. He was close to his mother, who was a high school art "
+    "teacher, and learned early that paying attention to people was its own kind of love. He had one long relationship "
+    "### Why This Person Fits You\n"
+    "Mira matches the steadiness and depth you described: small-circle energy, meaning over noise, and someone "
+    "who challenges you gently from a stable base rather than dragging you through chaos."
+)
+
 # -------------------------------
 # STAGE DEFINITIONS
 # -------------------------------
@@ -1072,6 +1132,12 @@ def init_session_state():
         st.session_state.awaiting_profile_choice = False
     if "test_llm_idx" not in st.session_state:
         st.session_state.test_llm_idx = 0
+    if "awaiting_profile_choice" not in st.session_state:
+        st.session_state.awaiting_profile_choice = False
+    if "profile_candidate_a" not in st.session_state:
+        st.session_state.profile_candidate_a = None
+    if "profile_candidate_b" not in st.session_state:
+        st.session_state.profile_candidate_b = None
 
 def advance_stage():
     current_idx = STAGES.index(st.session_state.stage)
@@ -1083,6 +1149,9 @@ def advance_stage():
         st.session_state.awaiting_summary_confirmation = False
         st.session_state.awaiting_profile_check = False
         st.session_state.awaiting_profile_ideas = False
+        st.session_state.awaiting_profile_choice = False
+        st.session_state.profile_candidate_a = None
+        st.session_state.profile_candidate_b = None
         st.session_state.profile_user_ideas = None
         st.session_state.profile_check_response = None
         st.session_state.awaiting_initial_refinement = False
@@ -1389,6 +1458,26 @@ def start_profile_stage():
     prompt_msg = "Before I build the profile — do you have anything specific in mind? A name, a vibe, a detail you definitely want included? Or should I surprise you?"
     st.session_state.messages.append({"role": "assistant", "content": prompt_msg})
     st.session_state.awaiting_profile_ideas = True
+
+def apply_profile_choice(which: str):
+    """User picked profile A or B; commit to chat history and move to refinement."""
+    a = st.session_state.get("profile_candidate_a")
+    b = st.session_state.get("profile_candidate_b")
+    chosen = a if which == "a" else b
+    if not chosen:
+        return
+    label = "Profile A" if which == "a" else "Profile B"
+    st.session_state.profile_text = chosen
+    st.session_state.frozen_profile = chosen
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": f"You chose **{label}**. Here it is — we can refine from here.\n\n{chosen}",
+    })
+    st.session_state.awaiting_profile_choice = False
+    st.session_state.profile_candidate_a = None
+    st.session_state.profile_candidate_b = None
+    advance_stage()
+    start_refinement_stage()
 
 def start_refinement_stage():
     prompt = "Does this feel right to you, or is something off?\n\n(Type **done** or **yes** when you're happy with it.)"
@@ -2104,6 +2193,25 @@ def main():
             padding: 0 !important;
             z-index: 100 !important;
         }
+        /*
+         * Nested st.columns (e.g. Profile A vs B) also render stHorizontalBlock + stColumn:last-child.
+         * Without this override, the *second* profile column incorrectly receives the Big 6 fixed-panel
+         * CSS — it stacks under the real Big 6 panel so only Profile A is visible.
+         */
+        [data-testid="stColumn"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
+            position: static !important;
+            right: auto !important;
+            top: auto !important;
+            height: auto !important;
+            width: auto !important;
+            min-width: 0 !important;
+            overflow: visible !important;
+            overflow-y: visible !important;
+            border-left: none !important;
+            background-color: transparent !important;
+            padding: 0 !important;
+            z-index: auto !important;
+        }
         /* Prevent main content from sliding under the right sidebar */
         section[data-testid="stMain"] > div:first-child {
             padding-right: 296px !important;
@@ -2163,6 +2271,33 @@ def main():
         render_chat_content()
 
 
+def render_profile_comparison():
+    """Side-by-side profile candidates with continue buttons (profile stage)."""
+    st.divider()
+    st.subheader("Which profile do you prefer?")
+    st.caption(
+        "Read both versions, then continue with the one that feels closer to what you're looking for."
+    )
+    a = st.session_state.get("profile_candidate_a")
+    b = st.session_state.get("profile_candidate_b")
+    if not a or not b:
+        st.warning("Profile options are not available.")
+        return
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        st.markdown("##### Profile A")
+        st.markdown(a)
+        if st.button("Continue with Profile A", key="profile_pick_a", type="primary", use_container_width=True):
+            apply_profile_choice("a")
+            st.rerun()
+    with c2:
+        st.markdown("##### Profile B")
+        st.markdown(b)
+        if st.button("Continue with Profile B", key="profile_pick_b", type="primary", use_container_width=True):
+            apply_profile_choice("b")
+            st.rerun()
+
+
 def render_chat_content():
     if st.session_state.stage == "intro":
         st.markdown("""
@@ -2181,6 +2316,12 @@ def render_chat_content():
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
+
+    if (
+        st.session_state.stage == "profile"
+        and st.session_state.get("awaiting_profile_choice")
+    ):
+        render_profile_comparison()
 
     # Chat input
     if st.session_state.stage == "intro":
@@ -2305,36 +2446,46 @@ def render_chat_content():
                     f"Reflect the ranked priorities and exclude all deal breakers."
                 )
 
-                # Build messages for Profile A (original prompt)
-                profile_prompt_a = PROFILE_SYSTEM_PROMPT.format(
-                    relationship_type=relationship_type,
-                    trait_summary=trait_summary,
-                    proposition_json=proposition_json
-                )
-                messages_a = [{"role": "system", "content": profile_prompt_a}]
-                if has_user_ideas:
-                    messages_a.append({"role": "user", "content": f"The user wants to include these ideas: {user_input}"})
-                messages_a.append({"role": "user", "content": user_content})
+                with st.spinner("Generating two profiles..."):
+                    if TEST_MODE:
+                        # Fixed mocks: avoids wrong sequential slot (e.g. R13 tension line in Profile A) and
+                        # matches R15+ for refinement — advance index as if one R14 call_llm had run.
+                        profile_a = _PROFILE_MOCK_VARIANT_A
+                        profile_b = _PROFILE_MOCK_VARIANT_B
+                        st.session_state.test_llm_idx = st.session_state.get("test_llm_idx", 0) + 1
+                    else:
+                        profile_a = call_llm(messages, temperature=0.72, max_tokens=3000)
+                        if not profile_a:
+                            st.error("Could not generate profiles. Please try again.")
+                            st.session_state.awaiting_profile_ideas = True
+                            st.rerun()
+                        messages_alt = messages + [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Now generate a second, clearly different alternative profile for the same "
+                                    "priorities and constraints: use a different first name, vary background and "
+                                    "concrete life details, and keep the same deal breakers and ranked priorities. "
+                                    "Output the full profile only."
+                                ),
+                            }
+                        ]
+                        profile_b = call_llm(messages_alt, temperature=0.92, max_tokens=3000)
+                        if not profile_b:
+                            st.error("Could not generate a second profile. Please try again.")
+                            st.session_state.awaiting_profile_ideas = True
+                            st.rerun()
 
-                # Build messages for Profile B (variant prompt)
-                profile_prompt_b = PROFILE_VARIANT_SYSTEM_PROMPT.format(
-                    relationship_type=relationship_type,
-                    trait_summary=trait_summary,
-                    proposition_json=proposition_json
-                )
-                messages_b = [{"role": "system", "content": profile_prompt_b}]
-                if has_user_ideas:
-                    messages_b.append({"role": "user", "content": f"The user wants to include these ideas: {user_input}"})
-                messages_b.append({"role": "user", "content": user_content})
-
-                with st.spinner("Generating two profiles for you to compare..."):
-                    response_a = call_llm(messages_a, max_tokens=3000)
-                    response_b = call_llm(messages_b, max_tokens=3000)
-
-                if response_a and response_b:
-                    st.session_state.profile_a = response_a
-                    st.session_state.profile_b = response_b
-                    st.session_state.awaiting_profile_choice = True
+                st.session_state.profile_candidate_a = profile_a
+                st.session_state.profile_candidate_b = profile_b
+                st.session_state.awaiting_profile_choice = True
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": (
+                        "Here are **two possible profiles** based on what you shared. "
+                        "Compare them side by side below, then pick the one you want to refine."
+                    ),
+                })
                 st.rerun()
 
     elif st.session_state.stage == "refinement":
