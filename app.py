@@ -113,7 +113,7 @@ def render_sidebar_timeline():
 
         # Connector line above (skip first)
         if i > 0:
-            color = "#fecdd3" if stage_idx <= current_idx else "#e5e7eb"
+            color = "#fecdd3" if stage_idx <= current_idx else "#fefeff"
             st.markdown(f'<div style="width:2px;height:16px;background:{color};margin-left:9px;"></div>', unsafe_allow_html=True)
 
         # Dot styling
@@ -151,10 +151,10 @@ def _render_substeps_inline(stage_key: str):
             line_color = "#f43f5e"
         elif i == active_i:
             txt = "color:#1a1a1a;font-weight:700;"
-            line_color = "#e5e7eb"  # gray from active onward
+            line_color = "#fecdd3"  # gray from active onward
         else:
             txt = "color:#1a1a1a;"
-            line_color = "#e5e7eb"
+            line_color = "#ffffff"
 
         st.markdown(f'<div style="display:flex;align-items:stretch;"><div style="width:2px;background:{line_color};margin-left:9px;margin-right:22px;flex-shrink:0;"></div><div style="padding:5px 0;"><span style="font-size:12px;{txt}">{label}</span></div></div>', unsafe_allow_html=True)
 # TRUST RECOVERY SYSTEM
@@ -1769,6 +1769,47 @@ def render_big6_panel():
     components.html(html, height=900, scrolling=False)
 
 
+def render_autoscroll():
+        components.html(
+                """
+                <script>
+                (function () {
+                    const parentDoc = window.parent.document;
+                    const mainSection = parentDoc.querySelector('section[data-testid="stMain"]');
+                    const mainInner = parentDoc.querySelector('section[data-testid="stMain"] > div:first-child');
+
+                    function scrollBottom() {
+                        try {
+                            if (mainInner) {
+                                mainInner.scrollTo({ top: mainInner.scrollHeight, behavior: 'smooth' });
+                            }
+                            if (mainSection) {
+                                mainSection.scrollTo({ top: mainSection.scrollHeight, behavior: 'smooth' });
+                            }
+                            window.parent.scrollTo({ top: parentDoc.body.scrollHeight, behavior: 'smooth' });
+                        } catch (_) {}
+                    }
+
+                    setTimeout(scrollBottom, 0);
+                    setTimeout(scrollBottom, 120);
+                    setTimeout(scrollBottom, 300);
+
+                    const observerTarget = mainInner || mainSection;
+                    if (!observerTarget) return;
+
+                    const observer = new MutationObserver(() => {
+                        scrollBottom();
+                    });
+                    observer.observe(observerTarget, { childList: true, subtree: true });
+                    setTimeout(() => observer.disconnect(), 1800);
+                })();
+                </script>
+                """,
+                height=0,
+                scrolling=False,
+        )
+
+
 # -----------------------------------------------------------------------
 def main():
     st.set_page_config(
@@ -1825,9 +1866,16 @@ def main():
             border-radius: 9999px !important;   
             position: fixed !important;
             bottom: 16px !important;
-            left: 320px !important;      /* left sidebar width */
-            width: calc(100% - 300px - 320px) !important; /* full width minus left + right sidebars */
+            left: 5% !important;
+            right: calc(296px + 1%) !important;  /* right panel reserve + gutter */
+            width: auto !important;
             z-index: 100 !important;
+        }
+
+        /* When sidebar is expanded, keep chat input inside main content area */
+        section[data-testid="stSidebar"][aria-expanded="true"] ~ section[data-testid="stMain"] [data-testid="stChatInput"],
+        section[data-testid="stSidebar"][aria-expanded="true"] ~ div [data-testid="stChatInput"] {
+            left: calc(320px + 16px) !important;
         }
             
         
@@ -1912,8 +1960,9 @@ def main():
                 width: 180px !important;
             }
             [data-testid="stChatInput"] {
-                left: 16px !important;          /* almost flush with screen edge */
-                width: calc(100% - 300px) !important; /* full width minus margin */
+                left: 16px !important;
+                right: 16px !important;
+                width: auto !important;
             }
             .main {
                 margin-left: 0 !important;
@@ -1929,8 +1978,9 @@ def main():
                 font-size: 14px !important;
             }
             [data-testid="stChatInput"] {
-            left: 16px !important;          /* almost flush with screen edge */
-            width: calc(100% - 200px) !important; /* full width minus margin */
+            left: 16px !important;
+            right: 16px !important;
+            width: auto !important;
             }
         }
         </style>
@@ -2137,6 +2187,8 @@ def render_chat_content():
 
         st.divider()
         st.info("You can start over using the sidebar button to create a new profile.")
+
+    render_autoscroll()
 
 if __name__ == "__main__":
     main()
