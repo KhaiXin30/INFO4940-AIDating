@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 # CONFIG
 # -------------------------------
 MODEL_PATH = "llama-3.1-8b.gguf"
-TEST_MODE = True  # Set to False to use the real model
+TEST_MODE = False  # Set to False to use the real model
 
 # 24 mock LLM responses covering the full happy path + trust recovery.
 # Ordered to match the call sequence:
@@ -1859,44 +1859,78 @@ def render_big6_panel():
 
 
 def render_autoscroll():
+    """Scroll main view: to profile comparison anchor when choosing A/B; else follow new chat at bottom."""
+    awaiting_profile_pick = (
+        st.session_state.get("stage") == "profile"
+        and st.session_state.get("awaiting_profile_choice")
+    )
+    if awaiting_profile_pick:
         components.html(
-                """
-                <script>
-                (function () {
-                    const parentDoc = window.parent.document;
-                    const mainSection = parentDoc.querySelector('section[data-testid="stMain"]');
-                    const mainInner = parentDoc.querySelector('section[data-testid="stMain"] > div:first-child');
-
-                    function scrollBottom() {
-                        try {
-                            if (mainInner) {
-                                mainInner.scrollTo({ top: mainInner.scrollHeight, behavior: 'smooth' });
-                            }
-                            if (mainSection) {
-                                mainSection.scrollTo({ top: mainSection.scrollHeight, behavior: 'smooth' });
-                            }
-                            window.parent.scrollTo({ top: parentDoc.body.scrollHeight, behavior: 'smooth' });
-                        } catch (_) {}
-                    }
-
-                    setTimeout(scrollBottom, 0);
-                    setTimeout(scrollBottom, 120);
-                    setTimeout(scrollBottom, 300);
-
-                    const observerTarget = mainInner || mainSection;
-                    if (!observerTarget) return;
-
-                    const observer = new MutationObserver(() => {
-                        scrollBottom();
-                    });
-                    observer.observe(observerTarget, { childList: true, subtree: true });
-                    setTimeout(() => observer.disconnect(), 1800);
-                })();
-                </script>
-                """,
-                height=0,
-                scrolling=False,
+            """
+            <script>
+            (function () {
+                const win = window.top || window.parent;
+                const doc = win.document;
+                function scrollToProfileSection() {
+                    try {
+                        const el = doc.getElementById("which-profile-do-you-prefer");
+                        if (el) {
+                            el.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                        const u = new URL(win.location.href);
+                        u.hash = "which-profile-do-you-prefer";
+                        win.history.replaceState(null, "", u.toString());
+                    } catch (_) {}
+                }
+                setTimeout(scrollToProfileSection, 0);
+                setTimeout(scrollToProfileSection, 120);
+                setTimeout(scrollToProfileSection, 400);
+            })();
+            </script>
+            """,
+            height=0,
+            scrolling=False,
         )
+        return
+
+    components.html(
+        """
+        <script>
+        (function () {
+            const parentDoc = window.parent.document;
+            const mainSection = parentDoc.querySelector('section[data-testid="stMain"]');
+            const mainInner = parentDoc.querySelector('section[data-testid="stMain"] > div:first-child');
+
+            function scrollBottom() {
+                try {
+                    if (mainInner) {
+                        mainInner.scrollTo({ top: mainInner.scrollHeight, behavior: 'smooth' });
+                    }
+                    if (mainSection) {
+                        mainSection.scrollTo({ top: mainSection.scrollHeight, behavior: 'smooth' });
+                    }
+                    window.parent.scrollTo({ top: parentDoc.body.scrollHeight, behavior: 'smooth' });
+                } catch (_) {}
+            }
+
+            setTimeout(scrollBottom, 0);
+            setTimeout(scrollBottom, 120);
+            setTimeout(scrollBottom, 300);
+
+            const observerTarget = mainInner || mainSection;
+            if (!observerTarget) return;
+
+            const observer = new MutationObserver(() => {
+                scrollBottom();
+            });
+            observer.observe(observerTarget, { childList: true, subtree: true });
+            setTimeout(() => observer.disconnect(), 1800);
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
 
 
 # -----------------------------------------------------------------------
@@ -2058,6 +2092,29 @@ def main():
             padding: 0 !important;
             z-index: auto !important;
         }
+        /*
+         * Side-by-side profile options (nested st.columns): smaller type than main chat.
+         * Also applies to other nested column UIs (e.g. trust recovery rows).
+         */
+        [data-testid="stColumn"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] [data-testid="stMarkdownContainer"] {
+            font-size: 0.8125rem !important;
+            line-height: 1.45 !important;
+        }
+        [data-testid="stColumn"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] [data-testid="stMarkdownContainer"] h1 {
+            font-size: 1.1rem !important;
+        }
+        [data-testid="stColumn"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] [data-testid="stMarkdownContainer"] h2,
+        [data-testid="stColumn"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] [data-testid="stMarkdownContainer"] h3 {
+            font-size: 0.98rem !important;
+        }
+        [data-testid="stColumn"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] [data-testid="stMarkdownContainer"] h4,
+        [data-testid="stColumn"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] [data-testid="stMarkdownContainer"] h5 {
+            font-size: 0.9rem !important;
+        }
+        /* Anchor for profile A/B section — scroll-margin keeps title below the header */
+        #which-profile-do-you-prefer {
+            scroll-margin-top: 5rem !important;
+        }
         /* Prevent main content from sliding under the right sidebar */
         section[data-testid="stMain"] > div:first-child {
             padding-right: 296px !important;
@@ -2120,7 +2177,12 @@ def main():
 def render_profile_comparison():
     """Side-by-side profile candidates with continue buttons (profile stage)."""
     st.divider()
-    st.subheader("Which profile do you prefer?")
+    st.markdown(
+        '<h4 id="which-profile-do-you-prefer" style="scroll-margin-top: 5rem; font-size: 1.1rem; font-weight: 600; margin: 0 0 0.35rem 0;">'
+        "Which profile do you prefer?"
+        "</h4>",
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Read both versions, then continue with the one that feels closer to what you're looking for."
     )
@@ -2131,13 +2193,13 @@ def render_profile_comparison():
         return
     c1, c2 = st.columns(2, gap="large")
     with c1:
-        st.markdown("##### Profile A")
+        st.markdown("###### Profile A")
         st.markdown(a)
         if st.button("Continue with Profile A", key="profile_pick_a", type="primary", use_container_width=True):
             apply_profile_choice("a")
             st.rerun()
     with c2:
-        st.markdown("##### Profile B")
+        st.markdown("###### Profile B")
         st.markdown(b)
         if st.button("Continue with Profile B", key="profile_pick_b", type="primary", use_container_width=True):
             apply_profile_choice("b")
@@ -2288,7 +2350,7 @@ def render_chat_content():
                     )
                 })
 
-                with st.spinner("Generating two profiles..."):
+                with st.spinner("Generating profile..."):
                     if TEST_MODE:
                         # Fixed mocks: avoids wrong sequential slot (e.g. R13 tension line in Profile A) and
                         # matches R15+ for refinement — advance index as if one R14 call_llm had run.
@@ -2305,7 +2367,7 @@ def render_chat_content():
                             {
                                 "role": "user",
                                 "content": (
-                                    "Now generate a second, clearly different alternative profile for the same "
+                                    "Now take a slightly different creative angle, and generate a second, clearly different alternative profile for the same "
                                     "priorities and constraints: use a different first name, vary background and "
                                     "concrete life details, and keep the same deal breakers and ranked priorities. "
                                     "Output the full profile only."
