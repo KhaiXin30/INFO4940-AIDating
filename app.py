@@ -737,7 +737,7 @@ PROFILE_SYSTEM_PROMPT = (
     "- Why This Person Fits You\n\n"
     "FOR ROMANTIC / CLOSE EMOTIONAL RELATIONSHIPS:\n"
     "- Physical Description\n"
-    "- Emotional Style & Love Languages\n"
+    "- Emotional Style\n"
     "- Conflict Style\n"
     "- Backstory\n"
     "- A Typical Day in Their Life\n\n"
@@ -781,7 +781,7 @@ PROFILE_VARIANT_SYSTEM_PROMPT = (
     "- Why This Person Fits You\n\n"
     "FOR ROMANTIC / CLOSE EMOTIONAL RELATIONSHIPS:\n"
     "- Physical Description\n"
-    "- Emotional Style & Love Languages\n"
+    "- Emotional Style\n"
     "- Conflict Style\n"
     "- Backstory\n"
     "- A Typical Day in Their Life\n\n"
@@ -2226,6 +2226,28 @@ def render_generate_profile_button():
         if (old)  old.remove();
         if (oldS) oldS.remove();
 
+        // --- Backdrop strip (always present) --------------------------------
+        // A real DOM element is used instead of a CSS pseudo-element because
+        // Streamlit's stMain creates its own stacking context, which makes
+        // ::after z-index unreliable. A JS-injected element in <body> sits
+        // cleanly above the scroll area at a known z-index.
+        var backdrop = pd.getElementById('_chat_input_backdrop');
+        if (!backdrop) {{
+            backdrop = pd.createElement('div');
+            backdrop.id = '_chat_input_backdrop';
+            Object.assign(backdrop.style, {{
+                position:       'fixed',
+                bottom:         '0',
+                left:           '0',
+                right:          '0',
+                height:         '80px',
+                background:     'var(--background-color)',
+                zIndex:         '98',
+                pointerEvents:  'none',
+            }});
+            pd.body.appendChild(backdrop);
+        }}
+
         if (!{'true' if show else 'false'}) return;
 
         // Measure the chat input so the button matches its height
@@ -2422,21 +2444,6 @@ def main():
             right: calc(296px + 1%) !important;  /* right panel reserve + gutter */
             width: auto !important;
             z-index: 100 !important;
-        }
-
-        /* Opaque backdrop strip behind the fixed chat input so scrolled content
-           doesn't bleed through. Sits at z-index 99 — below the input (100)
-           and the generate-profile button (101), above the scroll area. */
-        section[data-testid="stMain"]::after {
-            content: '';
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 80px;
-            background: var(--background-color);
-            z-index: 99;
-            pointer-events: none;
         }
 
         /* When sidebar is expanded, keep chat input inside main content area */
