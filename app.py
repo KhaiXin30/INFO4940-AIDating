@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 # CONFIG
 # -------------------------------
 MODEL_PATH = "llama-3.1-8b.gguf"
-TEST_MODE = False  # Set to False to use the real model
+TEST_MODE = True  # Set to False to use the real model
 
 # 25 mock LLM responses covering the full happy path + trust recovery.
 # Ordered to match the call sequence:
@@ -2774,6 +2774,34 @@ def main():
 
 def render_priority_ranking():
     """Inline chat widget: user sees and reorders match priorities before clarification starts."""
+    
+    # Add CSS styling for buttons - borderless and evenly spaced
+    st.markdown("""
+    <style>
+    /* Remove borders and style ranking buttons */
+    [data-testid="stButton"] button {
+        border: none !important;
+        background-color: transparent !important;
+        padding: 8px 6px !important;
+        min-width: 28px !important;
+        min-height: 28px !important;
+        font-size: 16px !important;
+        line-height: 1 !important;
+        color: #9ca3af !important;
+        cursor: pointer !important;
+        transition: all 0.2s !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    [data-testid="stButton"] button:hover {
+        color: #374151 !important;
+        background-color: rgba(0, 0, 0, 0.04) !important;
+        border-radius: 4px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     priorities = st.session_state.match_priorities
     n = len(priorities)
 
@@ -2792,7 +2820,7 @@ def render_priority_ranking():
     st.markdown("")
 
     for i, p in enumerate(priorities):
-        col_num, col_card, col_up, col_dn, col_rm = st.columns([0.08, 2.7, 0.15, 0.15, 0.15])
+        col_num, col_card, col_up, col_dn, col_rm = st.columns([0.06, 2.75, 0.13, 0.13, 0.13])
         with col_num:
             st.markdown(
                 f"<p style='margin:0;padding:14px 0 0;font-size:14px;"
@@ -2825,12 +2853,29 @@ def render_priority_ranking():
                 st.session_state.match_priorities = priorities
                 st.rerun()
         with col_rm:
-            if n > 1 and st.button("✕", key=f"prio_rm_{i}"):
+            if n > 1 and st.button("×", key=f"prio_rm_{i}"):
                 priorities.pop(i)
                 st.session_state.match_priorities = priorities
                 st.rerun()
 
     st.markdown("")
+    
+    # Style primary buttons to rose pink
+    st.markdown("""
+    <style>
+    button[kind="primary"] {
+        background-color: #f43f5e !important;
+        color: white !important;
+        border: none !important;
+        padding: 14px 18px !important;
+    }
+    button[kind="primary"]:hover {
+        background-color: #e11d48 !important;
+        color: white !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     if st.button("This is my order — let's continue", type="primary"):
         st.session_state.awaiting_priority_ranking = False
 
@@ -2942,6 +2987,34 @@ def render_looking_for_ranking():
 
 def render_deal_breaker_ranking():
     """Inline chat widget: user reviews and reorders deal breakers before moving to clarification."""
+    
+    # Add CSS styling for buttons - borderless and evenly spaced
+    st.markdown("""
+    <style>
+    /* Remove borders and style ranking buttons */
+    [data-testid="stButton"] button {
+        border: none !important;
+        background-color: transparent !important;
+        padding: 8px 6px !important;
+        min-width: 28px !important;
+        min-height: 28px !important;
+        font-size: 16px !important;
+        line-height: 1 !important;
+        color: #9ca3af !important;
+        cursor: pointer !important;
+        transition: all 0.2s !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    [data-testid="stButton"] button:hover {
+        color: #374151 !important;
+        background-color: rgba(0, 0, 0, 0.04) !important;
+        border-radius: 4px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     items = st.session_state.deal_breaker_items
     n = len(items)
 
@@ -2959,7 +3032,7 @@ def render_deal_breaker_ranking():
     st.markdown("")
 
     for i, p in enumerate(items):
-        col_num, col_card, col_up, col_dn, col_rm = st.columns([0.08, 2.7, 0.15, 0.15, 0.15])
+        col_num, col_card, col_up, col_dn, col_rm = st.columns([0.06, 2.75, 0.13, 0.13, 0.13])
         with col_num:
             st.markdown(
                 f"<p style='margin:0;padding:14px 0 0;font-size:14px;"
@@ -2998,6 +3071,22 @@ def render_deal_breaker_ranking():
                 st.rerun()
 
     st.markdown("")
+    
+    # Style primary buttons to rose pink
+    st.markdown("""
+    <style>
+    button[kind="primary"] {
+        background-color: #f43f5e !important;
+        color: white !important;
+        border: none !important;
+    }
+    button[kind="primary"]:hover {
+        background-color: #e11d48 !important;
+        color: white !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     if st.button("These are right — let's build my profile", type="primary", key="confirm_deal_breakers"):
         st.session_state.awaiting_deal_breaker_ranking = False
         st.session_state.deal_breakers_confirmed = True
