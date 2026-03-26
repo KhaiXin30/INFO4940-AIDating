@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 # CONFIG
 # -------------------------------
 MODEL_PATH = "llama-3.1-8b.gguf"
-TEST_MODE = True  # Set to False to use the real model
+TEST_MODE = False  # Set to False to use the real model
 
 # 25 mock LLM responses covering the full happy path + trust recovery.
 # Ordered to match the call sequence:
@@ -176,16 +176,16 @@ def render_sidebar_timeline():
 
         # Connector line above (skip first)
         if i > 0:
-            color = "#fecdd3" if stage_idx <= current_idx else "#fefeff"
+            color = "#fecdd3" if stage_idx <= current_idx else "transparent"
             st.markdown(f'<div style="width:2px;height:16px;background:{color};margin-left:9px;"></div>', unsafe_allow_html=True)
 
         # Dot styling
         if is_done:
-            bg, border, text, lbl = "#f43f5e", "#f43f5e", "✓", "color:#1a1a1a;"
+            bg, border, text, lbl = "#f43f5e", "#f43f5e", "✓", "color:var(--text-color);"
         elif is_active:
-            bg, border, text, lbl = "transparent", "#f43f5e", "", "color:#1a1a1a;font-weight:700;"
+            bg, border, text, lbl = "transparent", "#f43f5e", "", "color:var(--text-color);font-weight:700;"
         else:
-            bg, border, text, lbl = "transparent", "#ffffff", "", "color:#1a1a1a;"
+            bg, border, text, lbl = "transparent", "rgba(128,128,128,0.4)", "", "color:var(--text-color);"
 
         st.markdown(f'<div style="display:flex;align-items:center;gap:12px;"><div style="width:20px;height:20px;border-radius:50%;background:{bg};border:2px solid {border};display:flex;align-items:center;justify-content:center;font-size:10px;color:white;font-weight:700;flex-shrink:0;">{text}</div><span style="font-size:14px;{lbl}">{STAGE_LABELS[stage_key]}</span></div>', unsafe_allow_html=True)
 
@@ -210,14 +210,14 @@ def _render_substeps_inline(stage_key: str):
 
     for i, label in enumerate(steps):
         if i < active_i:
-            txt = "color:#1a1a1a;"
+            txt = "color:var(--text-color);"
             line_color = "#f43f5e"
         elif i == active_i:
-            txt = "color:#1a1a1a;font-weight:700;"
+            txt = "color:var(--text-color);font-weight:700;"
             line_color = "#fecdd3"  # gray from active onward
         else:
-            txt = "color:#1a1a1a;"
-            line_color = "#ffffff"
+            txt = "color:var(--text-color);"
+            line_color = "transparent"
 
         st.markdown(f'<div style="display:flex;align-items:stretch;"><div style="width:2px;background:{line_color};margin-left:9px;margin-right:22px;flex-shrink:0;"></div><div style="padding:5px 0;"><span style="font-size:12px;{txt}">{label}</span></div></div>', unsafe_allow_html=True)
 # TRUST RECOVERY SYSTEM
@@ -316,10 +316,13 @@ class TrustRecoverySystem:
         """
         lowered = ai_response.lower()
         if "[trust_recovery:error3]" in lowered:
+            print("[TRUST RECOVERY] 🔴 Detected: error3 (over-scope edit)")
             return "error3"
         if "[trust_recovery:error2]" in lowered:
+            print("[TRUST RECOVERY] 🔴 Detected: error2 (false assumption in profile)")
             return "error2"
         if "[trust_recovery:error1]" in lowered:
+            print("[TRUST RECOVERY] 🔴 Detected: error1 (AI confusion / clarifying question)")
             return "error1"
         return None
 
@@ -337,6 +340,7 @@ class TrustRecoverySystem:
         Generate and append a brief corrected-model summary after the user
         has replied to the AI's embedded clarifying question.
         """
+        print(f"[TRUST RECOVERY] 🟡 Executing error1 recovery. User clarification: {user_clarification[:80]}...")
         summary_msg = [
             {
                 "role": "system",
@@ -361,6 +365,7 @@ class TrustRecoverySystem:
         corrected_summary = call_llm(summary_msg, max_tokens=3000)
         if corrected_summary:
             st.session_state.messages.append({"role": "assistant", "content": corrected_summary})
+            print(f"[TRUST RECOVERY] ✅ error1 recovery complete. Alignment summary appended.")
 
         self.recovery_log.append({
             "type": "error_1_confusion",
@@ -377,6 +382,7 @@ class TrustRecoverySystem:
         and apply targeted corrections to only the affected sections.
         Returns the corrected profile text, or the original if no changes.
         """
+        print("[TRUST RECOVERY] 🟡 Executing error2 recovery (assumption audit)...")
         st.session_state.messages.append({
             "role": "assistant",
             "content": (
@@ -476,6 +482,7 @@ class TrustRecoverySystem:
                 "corrections_made": len(corrections),
                 "traits_corrected": list(corrections.keys())
             })
+            print(f"[TRUST RECOVERY] ✅ error2 complete — {len(corrections)} correction(s) applied to profile.")
             return updated_profile
 
         return profile_text
@@ -490,6 +497,7 @@ class TrustRecoverySystem:
         and apply only the precise targeted edit the user originally asked for.
         Returns the corrected profile text.
         """
+        print(f"[TRUST RECOVERY] 🟡 Executing error3 recovery (over-scope revert). Requested edit: {original_feedback[:80]}...")
         st.session_state.messages.append({
             "role": "assistant",
             "content": (
@@ -538,7 +546,7 @@ class TrustRecoverySystem:
                 "type": "error_3_overscope",
                 "edit_requested": original_feedback,
             })
-
+            print("[TRUST RECOVERY] ✅ error3 complete — targeted edit applied, profile reverted to frozen state.")
             return targeted_response
 
         return frozen_profile
@@ -1466,12 +1474,16 @@ def advance_stage():
 # STAGE HANDLERS
 # -------------------------------
 def handle_about_you(user_input):
-    if st.session_state.recovery_pending == "error1":
-        trust_recovery.recover_error1(user_input, st.session_state.stage_messages, st.session_state.user_portrait)
-        st.session_state.recovery_pending = None
-
+    # Append user message first so recovery has full context
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.session_state.stage_messages.append({"role": "user", "content": user_input})
+
+    if st.session_state.recovery_pending == "error1":
+        print("[TRUST RECOVERY] 🟡 error1 pending in about_you — running alignment recovery...")
+        trust_recovery.recover_error1(user_input, st.session_state.stage_messages, st.session_state.user_portrait)
+        st.session_state.recovery_pending = None
+        print("[TRUST RECOVERY] ✅ error1 complete — pipeline will continue on next user turn")
+        return  # Do not fire another LLM call this turn; let the user drive next
 
     with st.spinner("Thinking..."):
         ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
@@ -1555,12 +1567,16 @@ def _get_proposition_conversation_text():
     )
 
 def handle_proposition(user_input):
-    if st.session_state.recovery_pending == "error1":
-        trust_recovery.recover_error1(user_input, st.session_state.stage_messages, st.session_state.user_portrait)
-        st.session_state.recovery_pending = None
-
+    # Append user message first so recovery has full context
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.session_state.stage_messages.append({"role": "user", "content": user_input})
+
+    if st.session_state.recovery_pending == "error1":
+        print("[TRUST RECOVERY] 🟡 error1 pending in proposition — running alignment recovery...")
+        trust_recovery.recover_error1(user_input, st.session_state.stage_messages, st.session_state.user_portrait)
+        st.session_state.recovery_pending = None
+        print("[TRUST RECOVERY] ✅ error1 complete — pipeline will continue on next user turn")
+        return  # Do not fire another LLM call this turn; let the user drive next
 
     user_context_text = (
         f"The user is looking for: {st.session_state.relationship_type}\n\n"
@@ -1993,7 +2009,12 @@ def render_big6_panel():
         colors=json.dumps(CARD_COLORS),
         chips=json.dumps(chips),
     )
-    components.html(html, height=300, scrolling=False)
+    # Estimate height: header (~60px) + rows of chips (~70px each, ~2 per row) + footer padding.
+    # Use scrolling=True as a safety net for edge cases.
+    n = len(chips)
+    rows = max(1, -(-n // 2))  # ceiling division
+    estimated_height = 60 + rows * 70 + 30
+    components.html(html, height=estimated_height, scrolling=True)
 
 
 _AB_PROFILE_HTML = """<!DOCTYPE html>
@@ -2323,23 +2344,23 @@ def main():
         [data-testid="stSidebar"] {
             display: flex !important;
             position: sticky !important;
-            background-color: #f9fafb !important;
-            border-right: 1px solid #e5e7eb !important;
+            background-color: var(--secondary-background-color) !important;
+            border-right: 1px solid rgba(128,128,128,0.2) !important;
         }
         [data-testid="stSidebar"] > div:first-child {
-            background-color: #f9fafb !important;
+            background-color: var(--secondary-background-color) !important;
         }
 
         /* Target the actual inner container Streamlit renders */
         [data-testid="stChatInput"] > div {
             border-radius: 20px !important;
-            border: 1.5px solid #e5e7eb !important;
-            background-color: #ffffff !important;
+            border: 1.5px solid rgba(128,128,128,0.25) !important;
+            background-color: var(--background-color) !important;
             box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important;
             overflow: hidden !important;
         }
         [data-testid="stChatInput"] > div:focus-within {
-            border-color: #d1d5db !important;
+            border-color: rgba(128,128,128,0.45) !important;
             box-shadow: 0 2px 10px rgba(0,0,0,0.10) !important;
         }
 
@@ -2356,6 +2377,21 @@ def main():
             z-index: 100 !important;
         }
 
+        /* Opaque backdrop strip behind the fixed chat input so scrolled content
+           doesn't bleed through. Sits at z-index 99 — below the input (100)
+           and the generate-profile button (101), above the scroll area. */
+        section[data-testid="stMain"]::after {
+            content: '';
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 80px;
+            background: var(--background-color);
+            z-index: 99;
+            pointer-events: none;
+        }
+
         /* When sidebar is expanded, keep chat input inside main content area */
         section[data-testid="stSidebar"][aria-expanded="true"] ~ section[data-testid="stMain"] [data-testid="stChatInput"],
         section[data-testid="stSidebar"][aria-expanded="true"] ~ div [data-testid="stChatInput"] {
@@ -2367,8 +2403,8 @@ def main():
 
         /* Textarea itself */
         [data-testid="stChatInput"] textarea {
-            background-color: #ffffff !important;
-            color: #111827 !important;
+            background-color: var(--background-color) !important;
+            color: var(--text-color) !important;
             border: none !important;
             box-shadow: none !important;
         }
@@ -2389,15 +2425,15 @@ def main():
             background-color: #e11d48 !important;
         }
 
-        /* Make sure all inner wrappers are white — but NOT the button */
+        /* Make sure all inner wrappers follow theme — but NOT the button */
         [data-testid="stChatInput"] > div,
         [data-testid="stChatInput"] > div > div {
-            background-color: #ffffff !important;
+            background-color: var(--background-color) !important;
         }
 
         /* Only target non-button children */
         [data-testid="stChatInput"] *:not(button):not(svg):not(path) {
-            background-color: #ffffff !important;
+            background-color: var(--background-color) !important;
         }
 
         /* Restore button color explicitly after the wildcard */
@@ -2434,8 +2470,8 @@ def main():
             height: calc(100vh - 3.75rem) !important;
             width: 280px !important;
             overflow-y: auto !important;
-            border-left: 1px solid #e5e7eb !important;
-            background-color: #f9fafb !important;
+            border-left: 1px solid rgba(128,128,128,0.2) !important;
+            background-color: var(--secondary-background-color) !important;
             padding: 0 !important;
             z-index: 100 !important;
         }
@@ -2520,6 +2556,13 @@ def render_priority_ranking():
     priorities = st.session_state.match_priorities
     n = len(priorities)
 
+    # Build a stable id→color map so colors follow the trait, not its rank position
+    if "priority_color_map" not in st.session_state:
+        st.session_state.priority_color_map = {
+            p["id"]: CARD_COLORS[i % len(CARD_COLORS)] for i, p in enumerate(priorities)
+        }
+    color_map = st.session_state.priority_color_map
+
     st.markdown(
         "Based on everything you've shared, here's what I think matters most to you "
         "in this connection. **Use ↑ ↓ to put them in your order** — #1 is what you "
@@ -2536,7 +2579,7 @@ def render_priority_ranking():
                 unsafe_allow_html=True,
             )
         with col_card:
-            color = CARD_COLORS[i % len(CARD_COLORS)]
+            color = color_map.get(p["id"], CARD_COLORS[i % len(CARD_COLORS)])
             reason = p.get("reason", "")
             reason_html = (
                 f"<div style='font-size:11px;color:#6b7280;margin-top:5px;"
@@ -2574,6 +2617,13 @@ def render_looking_for_ranking():
     items = st.session_state.what_looking_for
     n = len(items)
 
+    # Build a stable id→color map so colors follow the trait, not its rank position
+    if "looking_for_color_map" not in st.session_state:
+        st.session_state.looking_for_color_map = {
+            p["id"]: CARD_COLORS[i % len(CARD_COLORS)] for i, p in enumerate(items)
+        }
+    color_map = st.session_state.looking_for_color_map
+
     st.markdown(
         "Here's what I think you're looking for in this connection. "
         "**Use ↑ ↓ to put them in your order** — #1 matters most to you. "
@@ -2590,7 +2640,7 @@ def render_looking_for_ranking():
                 unsafe_allow_html=True,
             )
         with col_card:
-            color = CARD_COLORS[i % len(CARD_COLORS)]
+            color = color_map.get(p["id"], CARD_COLORS[i % len(CARD_COLORS)])
             reason = p.get("reason", "")
             reason_html = (
                 f"<div style='font-size:11px;color:#6b7280;margin-top:5px;"
@@ -2633,6 +2683,13 @@ def render_deal_breaker_ranking():
     items = st.session_state.deal_breaker_items
     n = len(items)
 
+    # Build a stable id→color map so colors follow the trait, not its rank position
+    if "deal_breaker_color_map" not in st.session_state:
+        st.session_state.deal_breaker_color_map = {
+            p["id"]: CARD_COLORS[i % len(CARD_COLORS)] for i, p in enumerate(items)
+        }
+    color_map = st.session_state.deal_breaker_color_map
+
     st.markdown(
         "Based on everything you've shared, here are the things that would be genuine deal breakers for you. "
         "**Use ↑ ↓ to reorder** — #1 is your most non-negotiable."
@@ -2648,7 +2705,7 @@ def render_deal_breaker_ranking():
                 unsafe_allow_html=True,
             )
         with col_card:
-            color = CARD_COLORS[i % len(CARD_COLORS)]
+            color = color_map.get(p["id"], CARD_COLORS[i % len(CARD_COLORS)])
             reason = p.get("reason", "")
             reason_html = (
                 f"<div style='font-size:11px;color:#6b7280;margin-top:5px;"
@@ -2866,6 +2923,16 @@ def render_chat_content():
                 st.session_state.stage_messages.append({"role": "user", "content": user_input})
                 with st.chat_message("user"):
                     st.markdown(user_input)
+
+                # If a trust recovery was signalled on the previous turn, resolve it now
+                # and return — do not fire another LLM call on the same turn.
+                if st.session_state.get("recovery_pending") == "error1":
+                    print("[TRUST RECOVERY] 🟡 error1 pending in about_you (inline) — running alignment recovery...")
+                    trust_recovery.recover_error1(user_input, st.session_state.stage_messages, st.session_state.user_portrait)
+                    st.session_state.recovery_pending = None
+                    print("[TRUST RECOVERY] ✅ error1 complete — pipeline will continue on next user turn")
+                    st.rerun()
+
                 with st.spinner("Thinking..."):
                     ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
                 if ai_response:
