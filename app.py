@@ -200,8 +200,8 @@ def _render_substeps_inline(stage_key: str):
         steps = ["Chat about you", "Confirm summary"]
         active_i = 1 if ss.get("awaiting_summary_confirmation") else 0
     elif stage_key == "proposition":
-        steps = ["What you're looking for", "Deal breakers"]
-        active_i = 0 if not ss.get("trait_map_confirmed") else 1
+        steps = ["Your priorities", "Deal breakers"]
+        active_i = 1 if ss.get("awaiting_deal_breaker_ranking") else 0
     elif stage_key == "refinement":
         steps = ["Does it feel right?", "Fine-tune (optional)"]
         active_i = 0 if ss.get("awaiting_initial_refinement") else 1
@@ -709,12 +709,14 @@ TENSION_SYSTEM_PROMPT = (
     "Always address the user directly as 'you' — speak to them, not about them. "
     "Analyze their inferred relationship priorities and detect any internal contradictions or tensions.\n\n"
     "Each time you reply, the user message will say which clarification this is (**1 of 3**, **2 of 3**, or **3 of 3**). "
-    "Follow that line strictly:\n"
-    "- Ask **exactly ONE** clarifying question per message (one `?` only). "
-    "Optional: at most 1–2 short setup sentences before the question.\n"
+    "Follow this structure strictly:\n"
+    "1. **Acknowledge first** — Start with 1-2 sentences that reflect back what the user just said, "
+    "showing you heard and understood their answer. This is essential so the user feels their input matters.\n"
+    "2. **Then ask exactly ONE clarifying question** (one `?` only). "
+    "Optional: one short transition sentence before the question.\n"
     "- Do **not** stack, number, or bullet multiple questions.\n"
-    "- On **3 of 3**: ask one final clarifying question. Do NOT add any disclaimers, notes, "
-    "or remarks about the question budget or whether the user needs to answer. Just ask the question naturally.\n"
+    "- On **3 of 3**: acknowledge their answer, then ask one final clarifying question. "
+    "Do NOT add any disclaimers, notes, or remarks about the question budget. Just ask naturally.\n"
     "- If priorities already feel clear before turn 3, you may write [RESOLVED] on its own line and add a brief warm closing "
     "with **no** question — otherwise keep probing until turn 3.\n\n"
     "Do not resolve tensions for them — let the user think through them.\n\n"
@@ -896,6 +898,24 @@ def call_llm(messages, temperature=0.7, max_tokens=3000):
 # -------------------------------
 # HELPER FUNCTIONS
 # -------------------------------
+
+def _strip_refinement_notes(text):
+    """Remove trailing 'What changed:', '*Updated:', and suggestion notes from a profile."""
+    lines = text.split("\n")
+    cut_index = len(lines)
+    for i, line in enumerate(lines):
+        stripped = line.strip().lower()
+        if (stripped.startswith("what changed:") or
+            stripped.startswith("*updated:") or
+            stripped.startswith("one thing that might") or
+            stripped.startswith("no further changes") or
+            stripped.startswith("*no further changes")):
+            cut_index = i
+            break
+    # Also strip trailing italic notes like "*Updated: ..."
+    while cut_index > 0 and lines[cut_index - 1].strip().startswith("*"):
+        cut_index -= 1
+    return "\n".join(lines[:cut_index]).rstrip()
 
 # If user says "yes, these are right" we should confirm — not only exact "yes".
 _CONFIRMATION_EXACT = frozenset({
@@ -1263,15 +1283,9 @@ def _generate_deal_breaker_items(portrait, relationship_type):
             f"{i+1}. {p['label']}" + (f" — {p['reason']}" if p.get("reason") else "")
             for i, p in enumerate(st.session_state.match_priorities)
         )
-    looking_for_text = ""
-    if st.session_state.what_looking_for:
-        looking_for_text = "\n\nWhat they are looking for:\n" + "\n".join(
-            f"{i+1}. {p['label']}" + (f" — {p['reason']}" if p.get("reason") else "")
-            for i, p in enumerate(st.session_state.what_looking_for)
-        )
     messages = [
         {"role": "system", "content": (
-            f"Based on the user's personality portrait, confirmed priorities, and what they are looking for, "
+            f"Based on the user's personality portrait and confirmed priorities, "
             f"infer 2-4 genuine deal breakers for their {relationship_type}. "
             "These should be behaviours or traits that are non-negotiable given who this person is — "
             "things that would be genuinely incompatible with their personality and needs. "
@@ -1280,7 +1294,7 @@ def _generate_deal_breaker_items(portrait, relationship_type):
             "\"reason\": \"one sentence explaining why this would be incompatible\"}. "
             "No other text."
         )},
-        {"role": "user", "content": f"Portrait:\n{portrait_text}{priorities_text}{looking_for_text}"}
+        {"role": "user", "content": f"Portrait:\n{portrait_text}{priorities_text}"}
     ]
     response = call_llm(messages, temperature=0.2, max_tokens=600)
     try:
@@ -1502,61 +1516,76 @@ def handle_about_you(user_input):
                 _merge_live_traits(_new_live)
 
         if check_stage_completion("about_you", ai_response):
+            # Show only the summary portion, stripping any preamble
+            summary_idx = ai_response.find("SUMMARY:")
+            if summary_idx != -1:
+                summary_only = ai_response[summary_idx + len("SUMMARY:"):].strip()
+                st.session_state.messages[-1]["content"] = summary_only
+                st.session_state.stage_messages[-1]["content"] = summary_only
             st.session_state.messages.append({"role": "assistant", "content": "Does this capture you well? Feel free to correct anything or add something important I missed."})
             st.session_state.awaiting_summary_confirmation = True
 
 def handle_summary_confirmation(user_input):
     st.session_state.messages.append({"role": "user", "content": user_input})
-    st.session_state.awaiting_summary_confirmation = False
 
     if not user_signals_confirmation(user_input) and user_input.lower().strip() != "":
-        st.session_state.stage_messages.append({"role": "assistant", "content": st.session_state.stage_messages[-2]["content"]})
+        # User gave a correction — regenerate the summary incorporating their feedback
         st.session_state.stage_messages.append({"role": "user", "content": user_input})
-        st.session_state.messages.append({"role": "assistant", "content": "Got it — thanks for the clarification. I'll make sure that's reflected."})
-    # On confirm: no filler assistant line — trait map supplies the next message and its own intro.
 
+        revision_messages = list(st.session_state.stage_messages) + [
+            {
+                "role": "system",
+                "content": (
+                    "The user has corrected or added to your summary of who they are. "
+                    "You MUST meaningfully integrate their feedback — not just append a sentence at the end. "
+                    "Weave their correction naturally throughout the summary where it fits best. "
+                    "If they said something is wrong, remove or replace it. "
+                    "If they added something new, give it real weight in the summary — "
+                    "it matters enough that they brought it up.\n\n"
+                    "Output ONLY the revised summary in paragraph form. "
+                    "No preamble, no apology, no 'SUMMARY:' prefix, no 'Here is the updated summary'. "
+                    "Just the summary text itself."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"The user's correction: {user_input}",
+            }
+        ]
+
+        with st.spinner("Updating summary..."):
+            revised = call_llm(revision_messages, max_tokens=3000)
+
+        if revised:
+            # Strip any SUMMARY: prefix the LLM might add anyway
+            if "SUMMARY:" in revised:
+                revised = revised[revised.find("SUMMARY:") + len("SUMMARY:"):].strip()
+            st.session_state.stage_messages.append({"role": "assistant", "content": revised})
+            st.session_state.messages.append({"role": "assistant", "content": revised})
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "Does this capture you well now? Feel free to correct anything else or confirm to continue."
+            })
+        # Stay in awaiting_summary_confirmation so the user can confirm or correct again
+        return
+
+    # User confirmed — extract portrait and advance
+    st.session_state.awaiting_summary_confirmation = False
     with st.spinner("Analyzing your response..."):
         st.session_state.user_portrait = extract_user_portrait(st.session_state.stage_messages)
     _backfill_live_traits_from_portrait(st.session_state.user_portrait)
-    st.session_state.awaiting_priority_ranking = True
+    advance_stage()
+    start_proposition_stage()
 
-def start_proposition_stage(priorities_confirmed=False):
-    st.session_state.trait_map_confirmed = priorities_confirmed
-    st.session_state.proposition_categories = []
-    st.session_state.current_category_index = 0
+def start_proposition_stage():
     st.session_state.awaiting_deal_breakers = False
     st.session_state.deal_breakers_confirmed = False
 
-    user_context_text = (
-        f"The user is looking for: {st.session_state.relationship_type}\n\n"
-        f"Here is the structured portrait of who they are:\n"
-        f"{json.dumps(st.session_state.user_portrait, indent=2)}"
-    )
-    system_msg = {
-        "role": "system",
-        "content": get_unified_proposition_system_prompt(st.session_state.relationship_type),
-    }
-    user_context = {"role": "user", "content": user_context_text}
-    st.session_state.stage_messages = [system_msg, user_context]
-
-    if priorities_confirmed:
-        # Skip the unified LLM — show interactive "what you are looking for" ranking instead
-        with st.spinner("Building your profile details..."):
-            _generate_looking_for_items(
-                st.session_state.user_portrait,
-                st.session_state.relationship_type,
-            )
-        st.session_state.awaiting_looking_for_ranking = True
-    else:
-        # Original flow: fire the unified proposition LLM
-        with st.spinner("Reflecting on what you're looking for..."):
-            ai_response = call_llm(st.session_state.stage_messages, max_tokens=4000)
-
-        if ai_response:
-            st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
-            ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
-            st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
-            st.session_state.messages.append({"role": "assistant", "content": ai_response})
+    # Ensure match priorities are seeded (normally done by _backfill_live_traits_from_portrait)
+    if not st.session_state.match_priorities:
+        with st.spinner("Analyzing your priorities..."):
+            _seed_match_priorities_from_portrait(st.session_state.user_portrait)
+    st.session_state.awaiting_priority_ranking = True
 
 def _get_proposition_conversation_text():
     """Build the confirmed conversation text from stage_messages for context."""
@@ -1742,6 +1771,14 @@ def handle_tension(user_input):
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.session_state.stage_messages.append({"role": "user", "content": user_input})
 
+    # If a trust recovery was signalled on the previous turn, resolve it first
+    if st.session_state.recovery_pending == "error1":
+        print("[TRUST RECOVERY] 🟡 error1 pending in tension — running alignment recovery...")
+        trust_recovery.recover_error1(user_input, st.session_state.stage_messages, st.session_state.user_portrait)
+        st.session_state.recovery_pending = None
+        print("[TRUST RECOVERY] ✅ error1 complete — pipeline will continue on next user turn")
+        return  # Do not fire another LLM call this turn; let the user drive next
+
     # Check if the user just answered the 3rd question — wrap up without asking another
     st.session_state.round_count += 1
     if st.session_state.round_count > 3:
@@ -1774,6 +1811,9 @@ def handle_tension(user_input):
         ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
 
     if ai_response:
+        # Check for trust recovery signals before displaying
+        st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
+        ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
         st.session_state.stage_messages.append({"role": "assistant", "content": ai_response})
         st.session_state.messages.append({"role": "assistant", "content": ai_response})
 
@@ -1914,8 +1954,10 @@ def handle_refinement(user_input):
         else:
             st.session_state.stage_messages.append({"role": "assistant", "content": clean_response})
             st.session_state.messages.append({"role": "assistant", "content": clean_response})
-            st.session_state.profile_text = clean_response
-            st.session_state.frozen_profile = clean_response
+            # Store only the profile itself — strip "What changed:" / suggestions / "*Updated:" notes
+            profile_only = _strip_refinement_notes(clean_response)
+            st.session_state.profile_text = profile_only
+            st.session_state.frozen_profile = profile_only
             st.session_state.last_feedback = user_input
 
 # -------------------------------
@@ -1964,7 +2006,13 @@ function loadRemoved() {{
   catch(_) {{ return new Set(); }}
 }}
 function saveRemoved() {{ sessionStorage.setItem(RK, JSON.stringify([...removed])); }}
-function removeChip(id) {{ removed.add(id); saveRemoved(); render(); }}
+function removeChip(id) {{
+  removed.add(id); saveRemoved(); render();
+  // Notify Streamlit so the trait is removed from session state
+  const url = new URL(window.parent.location);
+  url.searchParams.set('remove_trait', id);
+  window.parent.location.href = url.toString();
+}}
 function mk(tag, cls) {{ const e = document.createElement(tag); if (cls) e.className = cls; return e; }}
 
 function render() {{
@@ -2009,11 +2057,10 @@ def render_big6_panel():
         colors=json.dumps(CARD_COLORS),
         chips=json.dumps(chips),
     )
-    # Estimate height: header (~60px) + rows of chips (~70px each, ~2 per row) + footer padding.
-    # Use scrolling=True as a safety net for edge cases.
+    # Estimate height: header (~70px) + each chip (~130px for label, text, bar, gap) + footer padding.
+    # Chips stack vertically in the narrow right panel, so count each chip as its own row.
     n = len(chips)
-    rows = max(1, -(-n // 2))  # ceiling division
-    estimated_height = 60 + rows * 70 + 30
+    estimated_height = 70 + max(n, 1) * 130 + 20
     components.html(html, height=estimated_height, scrolling=True)
 
 
@@ -2565,13 +2612,13 @@ def render_priority_ranking():
 
     st.markdown(
         "Based on everything you've shared, here's what I think matters most to you "
-        "in this connection. **Use ↑ ↓ to put them in your order** — #1 is what you "
-        "value most. This ranking shapes your profile directly."
+        "in this connection. **Use ↑ ↓ to reorder** — #1 is what you "
+        "value most. **Use ✕ to remove** anything that doesn't fit. This ranking shapes your profile directly."
     )
     st.markdown("")
 
     for i, p in enumerate(priorities):
-        col_num, col_card, col_up, col_dn = st.columns([0.08, 2.9, 0.2, 0.2])
+        col_num, col_card, col_up, col_dn, col_rm = st.columns([0.08, 2.7, 0.15, 0.15, 0.15])
         with col_num:
             st.markdown(
                 f"<p style='margin:0;padding:14px 0 0;font-size:14px;"
@@ -2603,12 +2650,30 @@ def render_priority_ranking():
                 priorities[i], priorities[i + 1] = priorities[i + 1], priorities[i]
                 st.session_state.match_priorities = priorities
                 st.rerun()
+        with col_rm:
+            if n > 1 and st.button("✕", key=f"prio_rm_{i}"):
+                priorities.pop(i)
+                st.session_state.match_priorities = priorities
+                st.rerun()
 
     st.markdown("")
     if st.button("This is my order — let's continue", type="primary"):
         st.session_state.awaiting_priority_ranking = False
-        advance_stage()
-        start_proposition_stage(priorities_confirmed=True)
+
+        # Display confirmed priorities in chat
+        priority_summary = "**Your priorities (in order):**\n\n" + "\n".join(
+            f"{i+1}. **{p['label']}** — {p.get('reason', '')}" if p.get("reason")
+            else f"{i+1}. **{p['label']}**"
+            for i, p in enumerate(st.session_state.match_priorities)
+        )
+        st.session_state.messages.append({"role": "assistant", "content": priority_summary})
+
+        with st.spinner("Identifying your deal breakers..."):
+            _generate_deal_breaker_items(
+                st.session_state.user_portrait,
+                st.session_state.relationship_type,
+            )
+        st.session_state.awaiting_deal_breaker_ranking = True
         st.rerun()
 
 
@@ -2692,12 +2757,12 @@ def render_deal_breaker_ranking():
 
     st.markdown(
         "Based on everything you've shared, here are the things that would be genuine deal breakers for you. "
-        "**Use ↑ ↓ to reorder** — #1 is your most non-negotiable."
+        "**Use ↑ ↓ to reorder** — #1 is your most non-negotiable. **Use ✕ to remove** anything that doesn't apply."
     )
     st.markdown("")
 
     for i, p in enumerate(items):
-        col_num, col_card, col_up, col_dn = st.columns([0.08, 2.9, 0.2, 0.2])
+        col_num, col_card, col_up, col_dn, col_rm = st.columns([0.08, 2.7, 0.15, 0.15, 0.15])
         with col_num:
             st.markdown(
                 f"<p style='margin:0;padding:14px 0 0;font-size:14px;"
@@ -2729,6 +2794,11 @@ def render_deal_breaker_ranking():
                 items[i], items[i + 1] = items[i + 1], items[i]
                 st.session_state.deal_breaker_items = items
                 st.rerun()
+        with col_rm:
+            if n > 1 and st.button("✕", key=f"db_rm_{i}"):
+                items.pop(i)
+                st.session_state.deal_breaker_items = items
+                st.rerun()
 
     st.markdown("")
     if st.button("These are right — let's build my profile", type="primary", key="confirm_deal_breakers"):
@@ -2757,16 +2827,17 @@ def render_deal_breaker_ranking():
                         for p in st.session_state.match_priorities
                     ],
                 },
-                {
-                    "category": "What You're Looking For",
-                    "ranked_items": [
-                        {"item": p["label"], "reasoning": p.get("reason", "")}
-                        for p in st.session_state.what_looking_for
-                    ],
-                },
             ],
             "deal_breakers": [p["label"] for p in st.session_state.deal_breaker_items],
         }
+
+        # Display confirmed deal breakers in chat
+        db_summary = "**Your deal breakers (in order):**\n\n" + "\n".join(
+            f"{i+1}. **{p['label']}** — {p.get('reason', '')}" if p.get("reason")
+            else f"{i+1}. **{p['label']}**"
+            for i, p in enumerate(st.session_state.deal_breaker_items)
+        )
+        st.session_state.messages.append({"role": "assistant", "content": db_summary})
 
         confirmed_msg = "Great — I have everything I need. Let's build your profile."
         st.session_state.messages.append({"role": "assistant", "content": confirmed_msg})
@@ -2803,6 +2874,14 @@ def render_profile_comparison():
 
 def render_chat_content():
     # "Skip Question" handler (callback-based, set from button on_click below)
+
+    # Trait removal: user clicked × on a chip in the Big 6 panel
+    _removed_trait = st.query_params.get("remove_trait")
+    if _removed_trait:
+        st.query_params.clear()
+        if _removed_trait in st.session_state.live_traits:
+            del st.session_state.live_traits[_removed_trait]
+        st.rerun()
 
     # "Generate Profile" skip: navigating to ?gen_profile=1 triggers the modal
     if st.query_params.get("gen_profile") == "1":
@@ -2905,9 +2984,7 @@ def render_chat_content():
             st.rerun()
 
     elif st.session_state.stage == "about_you":
-        if st.session_state.get("awaiting_priority_ranking", False):
-            render_priority_ranking()
-        elif st.session_state.get("awaiting_summary_confirmation", False):
+        if st.session_state.get("awaiting_summary_confirmation", False):
             if user_input := st.chat_input("Your response..."):
                 with st.chat_message("user"):
                     st.markdown(user_input)
@@ -2949,20 +3026,21 @@ def render_chat_content():
                         if new_live:
                             _merge_live_traits(new_live)
                     if check_stage_completion("about_you", ai_response):
+                        # Show only the summary portion, stripping any preamble
+                        summary_idx = ai_response.find("SUMMARY:")
+                        if summary_idx != -1:
+                            summary_only = ai_response[summary_idx + len("SUMMARY:"):].strip()
+                            st.session_state.messages[-1]["content"] = summary_only
+                            st.session_state.stage_messages[-1]["content"] = summary_only
                         st.session_state.messages.append({"role": "assistant", "content": "Does this capture you well? Feel free to correct anything or add something important I missed."})
                         st.session_state.awaiting_summary_confirmation = True
                 st.rerun()
 
     elif st.session_state.stage == "proposition":
-        if st.session_state.get("awaiting_looking_for_ranking", False):
-            render_looking_for_ranking()
+        if st.session_state.get("awaiting_priority_ranking", False):
+            render_priority_ranking()
         elif st.session_state.get("awaiting_deal_breaker_ranking", False):
             render_deal_breaker_ranking()
-        elif user_input := st.chat_input("Type 'yes' to confirm, or suggest changes..."):
-            with st.chat_message("user"):
-                st.markdown(user_input)
-            handle_proposition(user_input)
-            st.rerun()
 
     elif st.session_state.stage == "tension":
         _skip_active = st.session_state.pop("_skip_question", False)
@@ -2989,8 +3067,7 @@ def render_chat_content():
                 advance_stage()
                 start_refinement_stage()
                 st.rerun()
-            # Render the side-by-side AB comparison as an HTML component
-            render_profile_choice()
+            # Profile comparison is rendered above by render_profile_comparison()
 
         elif st.session_state.awaiting_profile_ideas:
             if user_input := st.chat_input("Your response..."):
@@ -3018,10 +3095,6 @@ def render_chat_content():
                     f"{i+1}. {p['label']}" + (f" — {p.get('reason','')}" if p.get("reason") else "")
                     for i, p in enumerate(st.session_state.match_priorities)
                 ) or "(not set)"
-                looking_for_block = "\n".join(
-                    f"{i+1}. {p['label']}" + (f" — {p.get('reason','')}" if p.get("reason") else "")
-                    for i, p in enumerate(st.session_state.what_looking_for)
-                ) or "(not set)"
                 deal_breakers_block = "\n".join(
                     f"- {p['label']}" + (f" — {p.get('reason','')}" if p.get("reason") else "")
                     for p in st.session_state.deal_breaker_items
@@ -3035,7 +3108,6 @@ def render_chat_content():
                     f"USER PORTRAIT (who they are):\n{json.dumps(st.session_state.user_portrait, indent=2)}\n\n"
                     f"ABOUT YOU — Personality dimensions observed during conversation:\n{live_traits_block}\n\n"
                     f"MATCH PRIORITIES (what they value most in a partner, ranked #1 = most important):\n{priorities_block}\n\n"
-                    f"WHAT THEY'RE LOOKING FOR (specific partner qualities, ranked #1 = most important):\n{looking_for_block}\n\n"
                     f"DEAL BREAKERS (must NOT appear anywhere in the profile):\n{deal_breakers_block}"
                 )
 
@@ -3055,7 +3127,7 @@ def render_chat_content():
                         f"{name_instruction}"
                         "Then a blank line, then the section headers and body. "
                         f"Select appropriate sections for this relationship type. "
-                        f"The top-ranked match priorities and looking-for qualities should come through most prominently. "
+                        f"The top-ranked match priorities should come through most prominently. "
                         f"The user's personality traits from 'About You' should be reflected in how the ideal person is described. "
                         f"End with a 'Why This Person Fits You' section that ties the profile back to the user's portrait. "
                         f"The profile must EXCLUDE all deal breakers entirely."
@@ -3075,16 +3147,27 @@ def render_chat_content():
                             st.error("Could not generate profiles. Please try again.")
                             st.session_state.awaiting_profile_ideas = True
                             st.rerun()
+                        variant_instruction = (
+                            "Now generate a second, clearly different alternative profile for the same "
+                            "priorities and constraints. "
+                        )
+                        if has_user_ideas:
+                            variant_instruction += (
+                                f"IMPORTANT: The user specifically requested these details: {user_input}. "
+                                "You MUST keep all of the user's requested details (name, age, job, vibe, etc.) "
+                                "exactly as they asked. Only vary the things the user did NOT specify — "
+                                "backstory, personality texture, day-to-day details, hobbies, etc. "
+                            )
+                        else:
+                            variant_instruction += (
+                                "Use a different first name, vary background and concrete life details. "
+                            )
+                        variant_instruction += (
+                            "Keep the same deal breakers and ranked priorities. "
+                            "Output the full profile only."
+                        )
                         messages_alt = messages + [
-                            {
-                                "role": "user",
-                                "content": (
-                                    "Now generate a second, clearly different alternative profile for the same "
-                                    "priorities and constraints: use a different first name, vary background and "
-                                    "concrete life details, and keep the same deal breakers and ranked priorities. "
-                                    "Output the full profile only."
-                                ),
-                            }
+                            {"role": "user", "content": variant_instruction}
                         ]
                         profile_b = call_llm(messages_alt, temperature=0.92, max_tokens=3000)
                         if not profile_b:
