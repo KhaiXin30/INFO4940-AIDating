@@ -87,57 +87,43 @@ _PROFILE_MOCK_VARIANT_A = (
     "Soren is the kind of person who actually listens — not politely, but with the kind of attention that makes "
     "you feel like the most important person in the room. He's unhurried and deliberate, someone who thinks "
     "before he speaks and means what he says. He has a dry, quiet sense of humor that surfaces when you least "
-    "expect it. He's not trying to impress anyone; he's just genuinely himself.\n\n"
+   "expect it. He's not trying to impress anyone; he's just genuinely himself.\n\n"
     "### Communication Style\n"
-    "Soren doesn't fill silence for the sake of it. He'll sit with you in a quiet moment without reaching for his "
-    "phone. When he does speak, it tends to be worth hearing — considered, specific, and warm. He's honest without "
-    "being blunt, and he knows how to name what he's feeling without making it dramatic.\n\n"
-    "### Emotional Style & Love Languages\n"
-    "His primary love language is quality time — undistracted, unhurried presence. He also notices the small things: "
-    "he'll remember what you said you were anxious about last week and ask how it went. He's not performative with "
-    "affection, but the consistency of it is unmistakable.\n\n"
-    "### A Typical Day in His Life\n"
-    "Soren starts his mornings slowly — coffee, reading, thirty minutes without a screen. He works in landscape "
-    "architecture and spends his afternoons between a desk and project sites. His evenings are quiet: cooking "
-    "something from scratch, a long walk, or a film he actually wants to talk about afterward.\n\n"
-    "### Conflict Style\n"
-    "He doesn't avoid hard conversations, but he doesn't rush into them either. He takes a breath, waits until he "
-    "can speak from understanding rather than reaction, and leads with curiosity — what happened, what did you need, "
-    "what can we do differently.\n\n"
-    "### Backstory\n"
-    "Soren grew up in a mid-sized city, the eldest of three. He was close to his mother, who was a high school art "
-    "teacher, and learned early that paying attention to people was its own kind of love. He had one long relationship "
-    "in his late twenties that ended amicably when they realized they wanted different versions of the future.\n\n"
+    "Soren doesn't fill silence for the sake of it. When he does speak, it tends to be worth hearing — considered, "
+    "specific, and warm. He's honest without being blunt.\n\n"
+    "### A Typical Interaction\n"
+    "A weekend might be a slow breakfast, a walk somewhere green, and a long conversation that wanders without "
+    "needing a point. Weeknights are low-key — cooking together or parallel reading in the same room.\n\n"
+    "### Emotional Style\n"
+    "His primary orientation is quality time — undistracted, unhurried presence. He notices the small things and "
+    "shows up with consistency.\n\n"
+    "### Physical Description\n"
+    "Tallish, unhurried in how he moves; soft-spoken; tends toward practical, comfortable clothes and an open, "
+    "attentive posture.\n\n"
     "### Why This Person Fits You\n"
-    "Soren offers exactly the combination you described: emotional depth within a stable, consistent presence. He won't "
-    "overwhelm you with intensity, but he won't give you surface level either. His pace matches yours — unhurried, "
-    "intentional, showing up the same way every time."
+    "Soren offers emotional depth within a stable, consistent presence. His pace matches yours — unhurried and "
+    "intentional."
 )
 
-# Second profile for TEST_MODE only — keeps sequential mock index aligned with R15+ (refinement).
+# Second profile for TEST_MODE — same Meet line and section titles/order as A (flexible 5–8 list).
 _PROFILE_MOCK_VARIANT_B = (
-    "**Meet Mira, a 29 year old woman.**\n\n### Personality & Core Traits\n"
-    "Mira is quietly intense in the best way — she cares about things deeply but wears it lightly. "
-    "She's the friend who remembers the book you mentioned once and shows up with it six months later. "
-    "She's observant without being judgmental, and she has a habit of asking the one question that unlocks the real conversation.\n\n"
+    "**Meet Soren, a 31 year old man.**\n\n### Personality & Core Traits\n"
+    "Soren is quietly intense in the best way — he cares deeply but wears it lightly. He's observant without "
+    "being judgmental, and he asks the one question that unlocks the real conversation.\n\n"
     "### Communication Style\n"
-    "She texts in full sentences, uses voice memos when tone matters, and would rather have a hard conversation "
-    "at the wrong time than a polite one that goes nowhere. She listens like it's a skill she's practiced on purpose.\n\n"
-    "### Emotional Style & Love Languages\n"
-    "Words of affirmation and quality time split the lead — she needs to hear that she's seen, and she needs "
-    "unhurried time together without an agenda. Physical affection is present but never performative.\n\n"
+    "He texts in full sentences, uses voice memos when tone matters, and would rather have a hard conversation "
+    "at the wrong time than a polite one that goes nowhere.\n\n"
     "### A Typical Interaction\n"
-    "You'd meet for a walk first, talk through what you're both carrying that week, then maybe cook together "
-    "or read side by side — parallel presence that still feels connected.\n\n"
-    "### Conflict Style\n"
-    "She names what's happening early, stays curious about your experience, and doesn't keep score — but she "
-    "does need repair to feel real, not just moving on.\n\n"
-    "### Backstory\n"
-    "Soren grew up in a mid-sized city, the eldest of three. He was close to his mother, who was a high school art "
-    "teacher, and learned early that paying attention to people was its own kind of love. He had one long relationship "
+    "Time together feels unhurried: a shared errand turns into the best talk of the week; he remembers what "
+    "you said last time and follows up.\n\n"
+    "### Emotional Style\n"
+    "Words of affirmation and quality time matter — he needs to feel seen, with unhurried time together without "
+    "an agenda.\n\n"
+    "### Physical Description\n"
+    "Medium height, warm eyes, expressive hands; dresses in a way that's put-together but never performative.\n\n"
     "### Why This Person Fits You\n"
-    "Mira matches the steadiness and depth you described: small-circle energy, meaning over noise, and someone "
-    "who challenges you gently from a stable base rather than dragging you through chaos."
+    "Soren matches the steadiness and depth you described: small-circle energy, meaning over noise, and someone who "
+    "challenges you gently from a stable base."
 )
 
 # -------------------------------
@@ -728,13 +714,22 @@ TENSION_SYSTEM_PROMPT = (
     f"{TRUST_RECOVERY_INSTRUCTIONS}"
 )
 
-PROFILE_SYSTEM_PROMPT = (
-    "You are collaboratively building a profile of the user's ideal {relationship_type} "
-    "based on everything you know about them.\n\n"
-    "The user's trait summary: {trait_summary}\n\n"
-    "Their confirmed priorities:\n{proposition_json}\n\n"
-    "SECTION SELECTION — Choose the sections that make sense for this relationship type. "
-    "Here are your options (pick 5-8):\n\n"
+# If Profile A's ### headings cannot be parsed (<5), Profile B falls back to this list (generic romantic-ish mix).
+DEFAULT_PROFILE_SECTION_FALLBACK_ORDERED = [
+    "Personality & Core Traits",
+    "Communication Style",
+    "A Typical Interaction",
+    "Emotional Style",
+    "Physical Description",
+    "Why This Person Fits You",
+]
+
+PROFILE_SECTION_SELECTION_TEXT = (
+    "SECTION SELECTION — Choose **5–8** sections that make sense for **{relationship_type}** "
+    "(romantic vs activity-based vs other — pick from the buckets below). "
+    "The two profiles will be compared side by side: **Profile B will mirror Profile A's exact section titles and order**, "
+    "so choose one coherent set of sections only.\n\n"
+    "Here are your options:\n\n"
     "FOR ANY RELATIONSHIP TYPE:\n"
     "- Personality & Core Traits\n"
     "- Communication Style\n"
@@ -751,18 +746,57 @@ PROFILE_SYSTEM_PROMPT = (
     "- Skill Level & Approach\n"
     "- Scheduling & Reliability\n"
     "- Growth Orientation\n\n"
+    "RULES: Use **only** titles from the lists above (exact wording, including parentheticals where shown). "
+    "Do not invent other top-level section names. "
+    "Each section must begin with one Markdown H3 line on its own line: `### ` followed by that title **exactly**. "
+    "Prefer including **Why This Person Fits You** as the **last** section when it fits. "
+    "If a section feels thin, still include at least one short paragraph.\n\n"
+)
+
+
+def _extract_profile_section_headers(text: str) -> list[str]:
+    """Section titles from `### Title` lines, in order (used to align profile B with profile A)."""
+    if not text:
+        return []
+    titles = []
+    for line in text.splitlines():
+        m = re.match(r"^###\s+(.+)$", line.strip())
+        if m:
+            titles.append(m.group(1).strip())
+    return titles
+
+
+def _extract_profile_meet_line(text: str) -> str | None:
+    """First non-empty line of the profile (the **Meet ...** line) — used so profile B matches profile A."""
+    if not text:
+        return None
+    for line in text.splitlines():
+        s = line.strip()
+        if s:
+            return s
+    return None
+
+
+PROFILE_SYSTEM_PROMPT = (
+    "You are collaboratively building a profile of the user's ideal {relationship_type} "
+    "based on everything you know about them.\n\n"
+    "The user's trait summary: {trait_summary}\n\n"
+    "Their confirmed priorities:\n{proposition_json}\n\n"
+    f"{PROFILE_SECTION_SELECTION_TEXT}"
     "STRICT RULES:\n"
     "- The **very first line** of the profile (before any section headers) must be exactly this pattern: "
-    "**Meet [FirstName].** — invent one plausible first name at random (vary style/culture). Add age in there too"
+    "**Meet [FirstName], a [Age] year old [Gender].** — invent plausible details. "
     "If the user already gave a name in their ideas, use that first name instead. "
     "Do not use the user's own name or a famous real person's name unless they asked.\n"
-    "- After that opening line, add a blank line, then use clear headers for each section (you may still "
-    "- Write in warm, engaging prose. Use a clear header for each section.\n"
+    "- After that opening line, add a blank line, then start **every** section with a Markdown H3 heading on "
+    "its own line: `### Section Name` (three hashes, space, title). "
+    "Do not use bold-only lines (`**Title**`) as section headers — use ### consistently for all sections.\n"
+    "- Write in warm, engaging prose under each heading.\n"
     "- Never show JSON to the user.\n"
     "- The top-ranked priorities from the proposition should come through clearly in the profile.\n"
     "- The profile must NOT include any of the user's stated deal breakers.\n"
     "- Keep the profile grounded and specific — this should feel like a real person, not a wish list.\n"
-    "- End with a short 'Why This Person Fits You' section that ties the profile back to "
+    "- When you include **Why This Person Fits You**, make it the **final** section and tie it to "
     "the user's personality and needs.\n\n"
     f"{TRUST_RECOVERY_INSTRUCTIONS}"
 )
@@ -771,43 +805,28 @@ PROFILE_VARIANT_SYSTEM_PROMPT = (
     "You are collaboratively building a profile of the user's ideal {relationship_type} "
     "based on everything you know about them.\n\n"
     "IMPORTANT: Another version of this profile is being generated at the same time. "
-    "Your job is to take a DIFFERENT creative angle. Vary the name, gender or age, "
-    "backstory, career, and day-to-day details while staying equally faithful to the "
-    "user's confirmed priorities and deal breakers. The personality fit should be just "
-    "as strong, but the surface-level texture should feel like a genuinely different person.\n\n"
+    "Your job is to take a DIFFERENT creative angle **in the section bodies** — different stories, "
+    "examples, career texture, and day-to-day specifics — while staying equally faithful to the "
+    "user's confirmed priorities and deal breakers. "
+    "The USER message gives the **exact** opening **Meet** line (same as the first profile); "
+    "use it verbatim — do **not** change name, age, or gender in that line.\n\n"
     "The user's trait summary: {trait_summary}\n\n"
     "Their confirmed priorities:\n{proposition_json}\n\n"
-    "SECTION SELECTION — Choose the sections that make sense for this relationship type. "
-    "Here are your options (pick 5-8):\n\n"
-    "FOR ANY RELATIONSHIP TYPE:\n"
-    "- Personality & Core Traits\n"
-    "- Communication Style\n"
-    "- A Typical Interaction (what spending time together looks like)\n"
-    "- Why This Person Fits You\n\n"
-    "FOR ROMANTIC / CLOSE EMOTIONAL RELATIONSHIPS:\n"
-    "- Physical Description\n"
-    "- Emotional Style\n"
-    "- Conflict Style\n"
-    "- Backstory\n"
-    "- A Typical Day in Their Life\n\n"
-    "FOR ACTIVITY / CONTEXT-BASED RELATIONSHIPS:\n"
-    "- Play Style or Work Style\n"
-    "- Skill Level & Approach\n"
-    "- Scheduling & Reliability\n"
-    "- Growth Orientation\n\n"
+    f"{PROFILE_SECTION_SELECTION_TEXT}"
+    "CRITICAL FOR THIS TURN: The USER message lists the exact `###` section headings and order for this profile. "
+    "Use **only** those headings — same titles, same order, no substitutions and no extra sections.\n\n"
     "STRICT RULES:\n"
-    "- The **very first line** of the profile (before any section headers) must be exactly this pattern: "
-    "**Meet [FirstName].** — invent one plausible first name at random (vary style/culture). Add age in there too"
-    "If the user already gave a name in their ideas, use that first name instead. "
-    "Do not use the user's own name or a famous real person's name unless they asked.\n"
-    "- After that opening line, add a blank line, then use clear headers for each section (you may still "
-    "- Write in warm, engaging prose. Use a clear header for each section.\n"
+    "- The **very first line** of the profile (before any section headers) is specified in the USER message "
+    "(copy the **Meet** line exactly — same spelling, age, and gender as the first profile).\n"
+    "- After that opening line, add a blank line, then start **every** section with a Markdown H3 heading on "
+    "its own line: `### Section Name` (three hashes, space, title). "
+    "Do not use bold-only lines (`**Title**`) as section headers — use ### consistently for all sections.\n"
+    "- Write in warm, engaging prose under each heading.\n"
     "- Never show JSON to the user.\n"
     "- The top-ranked priorities from the proposition should come through clearly in the profile.\n"
     "- The profile must NOT include any of the user's stated deal breakers.\n"
     "- Keep the profile grounded and specific — this should feel like a real person, not a wish list.\n"
-    "- End with a short 'Why This Person Fits You' section that ties the profile back to "
-    "the user's personality and needs.\n\n"
+    "- If the last section is **Why This Person Fits You**, tie it to the user's personality and needs.\n\n"
     f"{TRUST_RECOVERY_INSTRUCTIONS}"
 )
 
@@ -1148,7 +1167,8 @@ def _backfill_live_traits_from_portrait(portrait):
         if val and str(val).strip() and dim not in new_traits:
             new_traits[dim] = {"label": str(val).strip(), "confidence": 0.75, "evidence_count": 4}
     _merge_live_traits(new_traits)
-    _seed_match_priorities_from_portrait(portrait)
+    # Don't seed priorities here — wait for start_proposition_stage which has
+    # the full conversation + tension context for better priority generation.
 
 
 # ── Match Priority Seeding ───────────────────────────────────────────────
@@ -1174,7 +1194,7 @@ _TEST_PRIORITIES = [
 ]
 
 
-def _seed_match_priorities_from_portrait(portrait):
+def _seed_match_priorities_from_portrait(portrait, conversation_context="", tension_context=""):
     """Infer what the user values most in a partner and store as match_priorities.
     Only runs once — does not overwrite a list the user has already reordered.
     """
@@ -1187,19 +1207,31 @@ def _seed_match_priorities_from_portrait(portrait):
 
     portrait_text = json.dumps(portrait, indent=2)
     relationship_type = st.session_state.get("relationship_type", "relationship")
+
+    extra_context = ""
+    if conversation_context:
+        extra_context += f"\n\nCONVERSATION (the user's own words — use specific details they mentioned):\n{conversation_context}"
+    if tension_context:
+        extra_context += f"\n\nCLARIFICATIONS (important nuances the user explained):\n{tension_context}"
+
     messages = [
         {"role": "system", "content": (
-            "Based on a user's personality portrait, infer 4-6 qualities they most "
+            f"Based on a user's personality portrait and their conversation, infer 4-6 qualities they most "
             f"value in a partner for a {relationship_type}. "
+            "Pay close attention to SPECIFIC things the user mentioned — activities, traits, behaviors, "
+            "preferences. If they mentioned specific activities (e.g. badminton, hiking) or specific "
+            "qualities (e.g. honest feedback, pushing them to improve), create priorities that reflect "
+            "those specifics rather than generic categories.\n\n"
             "Return ONLY a JSON array ordered from most to least important. "
-            "Each item: {\"id\": \"...\", \"label\": \"short phrase (2-4 words)\", "
-            "\"reason\": \"one sentence explaining why this matters given the portrait\"}. "
-            "Prefer IDs from: shared_values, emotional_depth, intellectual_connection, "
-            "space_independence, communication_style, humor_warmth, life_goals, "
-            "reliability_trust, spontaneity, physical_chemistry. "
-            "Create a new id+label+reason if none fit. No other text."
+            "Each item: {\"id\": \"snake_case_id\", \"label\": \"short phrase (2-4 words)\", "
+            "\"reason\": \"one sentence explaining why this matters given what the user said\"}. "
+            "You may use IDs from this list if they fit: shared_values, emotional_depth, "
+            "intellectual_connection, space_independence, communication_style, humor_warmth, "
+            "life_goals, reliability_trust, spontaneity, physical_chemistry. "
+            "But CREATE new specific id+label+reason whenever the user's actual words suggest "
+            "something more precise. No other text."
         )},
-        {"role": "user", "content": f"Portrait:\n{portrait_text}"}
+        {"role": "user", "content": f"Portrait:\n{portrait_text}{extra_context}"}
     ]
     response = call_llm(messages, temperature=0.2, max_tokens=600)
     try:
@@ -1270,7 +1302,7 @@ _TEST_DEAL_BREAKERS = [
 ]
 
 
-def _generate_deal_breaker_items(portrait, relationship_type):
+def _generate_deal_breaker_items(portrait, relationship_type, conversation_context="", tension_context=""):
     """Generate the user's deal breakers as a structured, ordered list.
     Only runs once — does not overwrite if already seeded.
     """
@@ -1288,18 +1320,24 @@ def _generate_deal_breaker_items(portrait, relationship_type):
             f"{i+1}. {p['label']}" + (f" — {p['reason']}" if p.get("reason") else "")
             for i, p in enumerate(st.session_state.match_priorities)
         )
+    extra_context = ""
+    if conversation_context:
+        extra_context += f"\n\nCONVERSATION (the user's own words):\n{conversation_context}"
+    if tension_context:
+        extra_context += f"\n\nCLARIFICATIONS (important nuances):\n{tension_context}"
     messages = [
         {"role": "system", "content": (
-            f"Based on the user's personality portrait and confirmed priorities, "
+            f"Based on the user's personality portrait, confirmed priorities, and their conversation, "
             f"infer 2-4 genuine deal breakers for their {relationship_type}. "
             "These should be behaviours or traits that are non-negotiable given who this person is — "
             "things that would be genuinely incompatible with their personality and needs. "
+            "Pay attention to specific things the user mentioned in conversation. "
             "Return ONLY a JSON array ordered from most to least critical. "
             "Each item: {\"id\": \"snake_case_id\", \"label\": \"short phrase (2-4 words)\", "
             "\"reason\": \"one sentence explaining why this would be incompatible\"}. "
             "No other text."
         )},
-        {"role": "user", "content": f"Portrait:\n{portrait_text}{priorities_text}"}
+        {"role": "user", "content": f"Portrait:\n{portrait_text}{priorities_text}{extra_context}"}
     ]
     response = call_llm(messages, temperature=0.2, max_tokens=600)
     try:
@@ -1586,10 +1624,38 @@ def start_proposition_stage():
     st.session_state.awaiting_deal_breakers = False
     st.session_state.deal_breakers_confirmed = False
 
-    # Ensure match priorities are seeded (normally done by _backfill_live_traits_from_portrait)
+    # Build conversation context from chat history
+    conversation_context = "\n".join(
+        f"{m['role'].upper()}: {m['content']}"
+        for m in st.session_state.messages
+        if m["role"] in ("user", "assistant")
+    )
+
+    # Extract tension clarifications specifically
+    tension_context = ""
+    in_tension = False
+    tension_exchanges = []
+    for msg in st.session_state.messages:
+        content = msg.get("content", "")
+        if "Let me think through a couple of things" in content:
+            in_tension = True
+            continue
+        if "Thanks for working through that with me" in content:
+            in_tension = False
+            continue
+        if in_tension and msg["role"] in ("user", "assistant"):
+            tension_exchanges.append(f"{msg['role'].upper()}: {content}")
+    if tension_exchanges:
+        tension_context = "\n".join(tension_exchanges)
+
+    # Seed match priorities using portrait + conversation + tension context
     if not st.session_state.match_priorities:
         with st.spinner("Analyzing your priorities..."):
-            _seed_match_priorities_from_portrait(st.session_state.user_portrait)
+            _seed_match_priorities_from_portrait(
+                st.session_state.user_portrait,
+                conversation_context=conversation_context,
+                tension_context=tension_context,
+            )
     st.session_state.awaiting_priority_ranking = True
 
 def _get_proposition_conversation_text():
@@ -2208,6 +2274,84 @@ def render_autoscroll():
         )
 
 
+def render_scroll_to_top():
+    """Scroll the main app view to the top (final profile page after chat autoscroll)."""
+    components.html(
+        """
+        <script>
+        (function () {
+            const parentDoc = window.parent.document;
+            const mainSection = parentDoc.querySelector('section[data-testid="stMain"]');
+            const mainInner = parentDoc.querySelector('section[data-testid="stMain"] > div:first-child');
+            function scrollTopNow() {
+                try {
+                    if (mainInner) {
+                        mainInner.scrollTop = 0;
+                        mainInner.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+                    }
+                    if (mainSection) {
+                        mainSection.scrollTop = 0;
+                        mainSection.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+                    }
+                    if (parentDoc.documentElement) parentDoc.documentElement.scrollTop = 0;
+                    if (parentDoc.body) parentDoc.body.scrollTop = 0;
+                    window.parent.scrollTo(0, 0);
+                } catch (_) {}
+            }
+            scrollTopNow();
+            setTimeout(scrollTopNow, 0);
+            setTimeout(scrollTopNow, 100);
+            setTimeout(scrollTopNow, 300);
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
+
+
+def render_scroll_to_profile_choice():
+    """
+    Scroll the main column so the view starts at the last assistant message (the
+    'two possible profiles' line), then the A/B comparison below — not the bottom of the page.
+    """
+    components.html(
+        """
+        <script>
+        (function () {
+            const parentDoc = window.parent.document;
+            const mainSection = parentDoc.querySelector('section[data-testid="stMain"]');
+            const mainInner = parentDoc.querySelector('section[data-testid="stMain"] > div:first-child');
+            function scrollToLastAssistant() {
+                try {
+                    const scope = mainInner || mainSection || parentDoc.body;
+                    const msgs = scope.querySelectorAll('[data-testid="stChatMessage"]');
+                    if (msgs.length === 0) return;
+                    let target = null;
+                    for (let i = msgs.length - 1; i >= 0; i--) {
+                        const txt = (msgs[i].innerText || msgs[i].textContent || '').toLowerCase();
+                        if (txt.includes('two possible profiles')) {
+                            target = msgs[i];
+                            break;
+                        }
+                    }
+                    if (!target) target = msgs[msgs.length - 1];
+                    target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                } catch (_) {}
+            }
+            scrollToLastAssistant();
+            setTimeout(scrollToLastAssistant, 0);
+            setTimeout(scrollToLastAssistant, 120);
+            setTimeout(scrollToLastAssistant, 350);
+            setTimeout(scrollToLastAssistant, 700);
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
+
+
 # -----------------------------------------------------------------------
 def render_generate_profile_button():
     """Inject a 'Generate Profile' button fixed next to the chat input.
@@ -2372,6 +2516,7 @@ def onboarding_modal():
 - Learns about you through a guided conversation
 - Builds a detailed profile of your ideal connection
 - Works for any type of relationship — romantic, friendship, study partner, and more
+- Assumes the age and gender for your profile. If we make a mistake, feel free to correct it after profile generation!
         """
     )
 
@@ -2404,6 +2549,11 @@ def main():
     )
 
     init_session_state()
+
+    # "Generate Profile" uses ?gen_profile=1 — skip onboarding so main() does not st.stop() before
+    # render_chat_content opens _skip_confirmation_dialog().
+    if st.query_params.get("gen_profile") == "1":
+        st.session_state._onboarding_dismissed = True
 
     # Show onboarding modal on every fresh load (before any other UI renders)
     if not st.session_state.get("_onboarding_dismissed", False):
@@ -2692,10 +2842,33 @@ def render_priority_ranking():
         )
         st.session_state.messages.append({"role": "assistant", "content": priority_summary})
 
-        with st.spinner("Identifying your deal breakers..."):
+        with st.spinner("Moving on to deal breakers..."):
+            # Build conversation + tension context for deal breaker generation
+            _db_conversation = "\n".join(
+                f"{m['role'].upper()}: {m['content']}"
+                for m in st.session_state.messages
+                if m["role"] in ("user", "assistant")
+            )
+            _db_tension = ""
+            _in_t = False
+            _t_exchanges = []
+            for _msg in st.session_state.messages:
+                _content = _msg.get("content", "")
+                if "Let me think through a couple of things" in _content:
+                    _in_t = True
+                    continue
+                if "Thanks for working through that with me" in _content:
+                    _in_t = False
+                    continue
+                if _in_t and _msg["role"] in ("user", "assistant"):
+                    _t_exchanges.append(f"{_msg['role'].upper()}: {_content}")
+            if _t_exchanges:
+                _db_tension = "\n".join(_t_exchanges)
             _generate_deal_breaker_items(
                 st.session_state.user_portrait,
                 st.session_state.relationship_type,
+                conversation_context=_db_conversation,
+                tension_context=_db_tension,
             )
         st.session_state.awaiting_deal_breaker_ranking = True
         st.rerun()
@@ -2869,6 +3042,25 @@ def render_deal_breaker_ranking():
         advance_stage()
         start_profile_stage()
         st.rerun()
+
+
+def _normalize_profile_section_markdown(text: str) -> str:
+    """Turn standalone **Section Title** lines into ### headings so A/B columns render consistently."""
+    if not text:
+        return text
+    lines = text.splitlines()
+    out = []
+    for line in lines:
+        m = re.match(r"^\s*\*\*([^*]+)\*\*\s*$", line)
+        if m:
+            title = m.group(1).strip()
+            if len(title) <= 120 and not title.lower().startswith("meet "):
+                out.append(f"### {title}")
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def render_profile_comparison():
     """Side-by-side profile candidates with continue buttons (profile stage)."""
     st.divider()
@@ -2882,15 +3074,17 @@ def render_profile_comparison():
         st.warning("Profile options are not available.")
         return
     c1, c2 = st.columns(2, gap="large")
+    a_norm = _normalize_profile_section_markdown(a)
+    b_norm = _normalize_profile_section_markdown(b)
     with c1:
         st.markdown("##### Profile A")
-        st.markdown(a)
+        st.markdown(a_norm)
         if st.button("Continue with Profile A", key="profile_pick_a", type="primary", use_container_width=True):
             apply_profile_choice("a")
             st.rerun()
     with c2:
         st.markdown("##### Profile B")
-        st.markdown(b)
+        st.markdown(b_norm)
         if st.button("Continue with Profile B", key="profile_pick_b", type="primary", use_container_width=True):
             apply_profile_choice("b")
             st.rerun()
@@ -2976,6 +3170,7 @@ def render_chat_content():
         and st.session_state.get("awaiting_profile_choice")
     ):
         render_profile_comparison()
+        render_scroll_to_profile_choice()
 
     # Chat input
     if st.session_state.stage == "intro":
@@ -3177,16 +3372,16 @@ def render_chat_content():
                         f"{full_context}"
                         f"{user_ideas_block}\n\n"
                         f"{name_instruction}"
-                        "Then a blank line, then the section headers and body. "
-                        f"Select appropriate sections for this relationship type. "
+                        "Then a blank line, then **5–8** sections chosen from the SECTION SELECTION options in the system prompt — "
+                        "pick the set that best fits this relationship type; use `###` headings with titles **exactly** as in the options. "
+                        "Profile B will match your section titles and order, so choose one clear structure. "
                         f"The top-ranked match priorities should come through most prominently. "
                         f"The user's personality traits from 'About You' should be reflected in how the ideal person is described. "
-                        f"End with a 'Why This Person Fits You' section that ties the profile back to the user's portrait. "
                         f"The profile must EXCLUDE all deal breakers entirely."
                     )
                 })
 
-                with st.spinner("Generating two profiles..."):
+                with st.spinner("Generating profile..."):
                     if TEST_MODE:
                         # Fixed mocks: avoids wrong sequential slot (e.g. R13 tension line in Profile A) and
                         # matches R15+ for refinement — advance index as if one R14 call_llm had run.
@@ -3201,25 +3396,49 @@ def render_chat_content():
                             st.rerun()
                         variant_instruction = (
                             "Now generate a second, clearly different alternative profile for the same "
-                            "priorities and constraints. "
+                            "priorities and constraints. Vary the **content under each section** — different "
+                            "stories, examples, and specifics — not the opening line or section titles.\n\n"
                         )
                         if has_user_ideas:
                             variant_instruction += (
                                 f"IMPORTANT: The user specifically requested these details: {user_input}. "
                                 "You MUST keep all of the user's requested details (name, age, job, vibe, etc.) "
-                                "exactly as they asked. Only vary the things the user did NOT specify — "
+                                "exactly as they asked in the section bodies. Only vary the things the user did NOT specify — "
                                 "backstory, personality texture, day-to-day details, hobbies, etc. "
                             )
-                        else:
+                        meet_line = _extract_profile_meet_line(profile_a)
+                        if meet_line:
                             variant_instruction += (
-                                "Use a different first name, vary background and concrete life details. "
+                                "OPENING LINE — Use this **exact** first line (verbatim — same name, age, gender, punctuation, "
+                                "including `**` if present), then one blank line before the first `###` section:\n"
+                                f"{meet_line}\n\n"
                             )
+                        section_order = _extract_profile_section_headers(profile_a)
+                        if len(section_order) < 5:
+                            section_order = list(DEFAULT_PROFILE_SECTION_FALLBACK_ORDERED)
                         variant_instruction += (
                             "Keep the same deal breakers and ranked priorities. "
-                            "Output the full profile only."
+                            "Output the full profile only.\n\n"
+                            "STRUCTURE — Profile B must use the **exact same** section titles and **exact same order** "
+                            "as listed below (mirror Profile A; do not rename or swap sections — e.g. if the list says "
+                            "'A Typical Interaction', do not write 'A Typical Day in Their Life' instead, and vice versa). "
+                            "Required `###` headings, in order:\n"
                         )
-                        messages_alt = messages + [
-                            {"role": "user", "content": variant_instruction}
+                        for i, title in enumerate(section_order, 1):
+                            variant_instruction += f"{i}. ### {title}\n"
+                        variant_instruction += (
+                            "\nFORMAT: One `### Title` line per section, then paragraphs. "
+                            "Do not use bold-only (**Title**) lines as section headers."
+                        )
+                        variant_system = PROFILE_VARIANT_SYSTEM_PROMPT.format(
+                            relationship_type=relationship_type,
+                            trait_summary=trait_summary,
+                            proposition_json=proposition_json,
+                        )
+                        messages_alt = [
+                            {"role": "system", "content": variant_system},
+                            messages[1],
+                            {"role": "user", "content": variant_instruction},
                         ]
                         profile_b = call_llm(messages_alt, temperature=0.92, max_tokens=3000)
                         if not profile_b:
@@ -3268,9 +3487,16 @@ def render_chat_content():
 
         st.divider()
         st.info("You can start over using the sidebar button to create a new profile.")
+        render_scroll_to_top()
 
     if st.session_state.stage != "complete":
-        render_autoscroll()
+        # Don't fight profile A/B scroll: autoscroll jumps to bottom and hides the last AI line + cards
+        _profile_choice = (
+            st.session_state.stage == "profile"
+            and st.session_state.get("awaiting_profile_choice")
+        )
+        if not _profile_choice:
+            render_autoscroll()
         render_generate_profile_button()
     else:
         # Remove backdrop and generate-profile button injected by previous stages
