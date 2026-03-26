@@ -143,7 +143,7 @@ _PROFILE_MOCK_VARIANT_B = (
 # -------------------------------
 # STAGE DEFINITIONS
 # -------------------------------
-STAGES = ["intro", "about_you", "proposition", "tension", "profile", "refinement", "complete"]
+STAGES = ["intro", "about_you", "tension", "proposition", "profile", "refinement", "complete"]
 STAGE_LABELS = {
     "intro": "Welcome",
     "about_you": "Getting to Know You",
@@ -707,7 +707,12 @@ def get_deal_breakers_system_prompt(relationship_type):
 TENSION_SYSTEM_PROMPT = (
     "You are a warm relationship coach having a conversation with the user. "
     "Always address the user directly as 'you' — speak to them, not about them. "
-    "Analyze their inferred relationship priorities and detect any internal contradictions or tensions.\n\n"
+    "You have a personality portrait of the user. Analyze it for any internal contradictions, "
+    "tensions, or nuances in how they described themselves — things that could affect what kind "
+    "of connection would truly work for them.\n\n"
+    "For example: they might describe themselves as introverted but also say they love collaborating; "
+    "or they might value structure but also say they're open to spontaneity. These are the kinds of "
+    "tensions worth exploring — they help clarify what the user actually needs before we build priorities.\n\n"
     "Each time you reply, the user message will say which clarification this is (**1 of 3**, **2 of 3**, or **3 of 3**). "
     "Follow this structure strictly:\n"
     "1. **Acknowledge first** — Start with 1-2 sentences that reflect back what the user just said, "
@@ -717,7 +722,7 @@ TENSION_SYSTEM_PROMPT = (
     "- Do **not** stack, number, or bullet multiple questions.\n"
     "- On **3 of 3**: acknowledge their answer, then ask one final clarifying question. "
     "Do NOT add any disclaimers, notes, or remarks about the question budget. Just ask naturally.\n"
-    "- If priorities already feel clear before turn 3, you may write [RESOLVED] on its own line and add a brief warm closing "
+    "- If things already feel clear before turn 3, you may write [RESOLVED] on its own line and add a brief warm closing "
     "with **no** question — otherwise keep probing until turn 3.\n\n"
     "Do not resolve tensions for them — let the user think through them.\n\n"
     f"{TRUST_RECOVERY_INSTRUCTIONS}"
@@ -1569,13 +1574,13 @@ def handle_summary_confirmation(user_input):
         # Stay in awaiting_summary_confirmation so the user can confirm or correct again
         return
 
-    # User confirmed — extract portrait and advance
+    # User confirmed — extract portrait and advance to tension
     st.session_state.awaiting_summary_confirmation = False
     with st.spinner("Analyzing your response..."):
         st.session_state.user_portrait = extract_user_portrait(st.session_state.stage_messages)
     _backfill_live_traits_from_portrait(st.session_state.user_portrait)
     advance_stage()
-    start_proposition_stage()
+    start_tension_stage()
 
 def start_proposition_stage():
     st.session_state.awaiting_deal_breakers = False
@@ -1752,7 +1757,7 @@ def tension_clarification_turn_user_message(clarification_num: int) -> str:
 
 def start_tension_stage():
     system_msg = {"role": "system", "content": TENSION_SYSTEM_PROMPT}
-    user_context = {"role": "user", "content": f"Here are the user's inferred priorities: {json.dumps(st.session_state.proposition_data)}"}
+    user_context = {"role": "user", "content": f"Here is the user's personality portrait: {json.dumps(st.session_state.user_portrait)}"}
     turn_hint = {"role": "user", "content": tension_clarification_turn_user_message(1)}
     st.session_state.stage_messages = [system_msg, user_context, turn_hint]
 
@@ -1799,7 +1804,7 @@ def handle_tension(user_input):
                 st.session_state.messages.append({"role": "assistant", "content": wrap_up})
             st.session_state.messages.append({"role": "assistant", "content": "Thanks for working through that with me!"})
         advance_stage()
-        start_profile_stage()
+        start_proposition_stage()
         return
 
     # round_count is now 2 or 3 = which clarification the assistant is about to produce
@@ -1819,7 +1824,7 @@ def handle_tension(user_input):
 
         if "resolved" in ai_response.lower():
             advance_stage()
-            start_profile_stage()
+            start_proposition_stage()
 
 def start_profile_stage():
     prompt_msg = "Before I build the profile — do you have anything specific in mind? A name, a vibe, a detail you definitely want included? Or should I surprise you?"
@@ -2226,11 +2231,17 @@ def render_generate_profile_button():
         if (old)  old.remove();
         if (oldS) oldS.remove();
 
+        // --- Detect Streamlit's actual background color ----------------------
+        var appBg = '#ffffff';
+        try {{
+            var stApp = pd.querySelector('[data-testid="stAppViewContainer"]') || pd.querySelector('.stApp') || pd.body;
+            var computed = window.parent.getComputedStyle(stApp).backgroundColor;
+            if (computed && computed !== 'rgba(0, 0, 0, 0)' && computed !== 'transparent') {{
+                appBg = computed;
+            }}
+        }} catch(_) {{}}
+
         // --- Backdrop strip (always present) --------------------------------
-        // A real DOM element is used instead of a CSS pseudo-element because
-        // Streamlit's stMain creates its own stacking context, which makes
-        // ::after z-index unreliable. A JS-injected element in <body> sits
-        // cleanly above the scroll area at a known z-index.
         var backdrop = pd.getElementById('_chat_input_backdrop');
         if (!backdrop) {{
             backdrop = pd.createElement('div');
@@ -2240,12 +2251,18 @@ def render_generate_profile_button():
                 bottom:         '0',
                 left:           '0',
                 right:          '0',
-                height:         '80px',
-                background:     'var(--background-color)',
+                height:         '90px',
                 zIndex:         '98',
                 pointerEvents:  'none',
             }});
             pd.body.appendChild(backdrop);
+        }}
+        backdrop.style.background = appBg;
+
+        // Ensure the chat input wrapper itself has an opaque background
+        var chatWrapper = pd.querySelector('[data-testid="stChatInput"]');
+        if (chatWrapper) {{
+            chatWrapper.style.setProperty('background', appBg, 'important');
         }}
 
         if (!{'true' if show else 'false'}) return;
@@ -2436,8 +2453,8 @@ def main():
         /* Remove default border from the outer wrapper */
         [data-testid="stChatInput"] {
             border: none !important;
-            background: transparent !important;
-            border-radius: 9999px !important;   
+            background: var(--background-color) !important;
+            border-radius: 9999px !important;
             position: fixed !important;
             bottom: 16px !important;
             left: 5% !important;
@@ -2850,7 +2867,7 @@ def render_deal_breaker_ranking():
         st.session_state.messages.append({"role": "assistant", "content": confirmed_msg})
 
         advance_stage()
-        start_tension_stage()
+        start_profile_stage()
         st.rerun()
 def render_profile_comparison():
     """Side-by-side profile candidates with continue buttons (profile stage)."""
@@ -3043,12 +3060,6 @@ def render_chat_content():
                         st.session_state.awaiting_summary_confirmation = True
                 st.rerun()
 
-    elif st.session_state.stage == "proposition":
-        if st.session_state.get("awaiting_priority_ranking", False):
-            render_priority_ranking()
-        elif st.session_state.get("awaiting_deal_breaker_ranking", False):
-            render_deal_breaker_ranking()
-
     elif st.session_state.stage == "tension":
         _skip_active = st.session_state.pop("_skip_question", False)
         user_input = st.chat_input("Your response...")
@@ -3059,6 +3070,12 @@ def render_chat_content():
                 st.markdown(user_input)
             handle_tension(user_input)
             st.rerun()
+
+    elif st.session_state.stage == "proposition":
+        if st.session_state.get("awaiting_priority_ranking", False):
+            render_priority_ranking()
+        elif st.session_state.get("awaiting_deal_breaker_ranking", False):
+            render_deal_breaker_ranking()
 
     elif st.session_state.stage == "profile":
         if st.session_state.awaiting_profile_choice:
@@ -3111,11 +3128,29 @@ def render_chat_content():
                     for v in st.session_state.get("live_traits", {}).values()
                 ) or "(not captured)"
 
+                # Extract tension clarifications from chat history
+                tension_block = ""
+                in_tension = False
+                tension_exchanges = []
+                for msg in st.session_state.messages:
+                    content = msg.get("content", "")
+                    if "Let me think through a couple of things" in content:
+                        in_tension = True
+                        continue
+                    if "Thanks for working through that with me" in content:
+                        in_tension = False
+                        continue
+                    if in_tension and msg["role"] in ("user", "assistant"):
+                        tension_exchanges.append(f"{msg['role'].upper()}: {content}")
+                if tension_exchanges:
+                    tension_block = f"\n\nCLARIFICATIONS (important nuances the user explained about themselves):\n" + "\n".join(tension_exchanges)
+
                 full_context = (
                     f"USER PORTRAIT (who they are):\n{json.dumps(st.session_state.user_portrait, indent=2)}\n\n"
                     f"ABOUT YOU — Personality dimensions observed during conversation:\n{live_traits_block}\n\n"
                     f"MATCH PRIORITIES (what they value most in a partner, ranked #1 = most important):\n{priorities_block}\n\n"
                     f"DEAL BREAKERS (must NOT appear anywhere in the profile):\n{deal_breakers_block}"
+                    f"{tension_block}"
                 )
 
                 profile_prompt = PROFILE_SYSTEM_PROMPT.format(
@@ -3124,13 +3159,23 @@ def render_chat_content():
                     proposition_json=proposition_json
                 )
                 messages = [{"role": "system", "content": profile_prompt}]
+
+                user_ideas_block = ""
                 if has_user_ideas:
-                    messages.append({"role": "user", "content": f"The user wants to include these ideas: {user_input}"})
+                    user_ideas_block = (
+                        f"\n\nUSER'S SPECIFIC REQUESTS (HIGHEST PRIORITY — you MUST incorporate all of these):\n"
+                        f"{user_input}\n"
+                        f"These requests override any default choices you would make. "
+                        f"If the user specified a name, use that name. If they specified a job, use that job. "
+                        f"If they specified a vibe or personality detail, make it central to the profile."
+                    )
+
                 messages.append({
                     "role": "user",
                     "content": (
                         f"Generate a complete profile using all of the following confirmed information:\n\n"
-                        f"{full_context}\n\n"
+                        f"{full_context}"
+                        f"{user_ideas_block}\n\n"
                         f"{name_instruction}"
                         "Then a blank line, then the section headers and body. "
                         f"Select appropriate sections for this relationship type. "
@@ -3224,8 +3269,24 @@ def render_chat_content():
         st.divider()
         st.info("You can start over using the sidebar button to create a new profile.")
 
-    render_autoscroll()
-    render_generate_profile_button()
+    if st.session_state.stage != "complete":
+        render_autoscroll()
+        render_generate_profile_button()
+    else:
+        # Remove backdrop and generate-profile button injected by previous stages
+        components.html("""
+        <script>
+        (function() {
+            var pd = window.parent.document;
+            var backdrop = pd.getElementById('_chat_input_backdrop');
+            if (backdrop) backdrop.remove();
+            var btn = pd.getElementById('_gen_profile_btn');
+            if (btn) btn.remove();
+            var style = pd.getElementById('_gen_profile_style');
+            if (style) style.remove();
+        })();
+        </script>
+        """, height=0)
 
 if __name__ == "__main__":
     main()
