@@ -1911,36 +1911,6 @@ def start_profile_stage():
     st.session_state.awaiting_profile_ideas = True
 
 
-def trigger_skip_to_profile():
-    """Jump straight to profile generation using whatever conversation exists so far."""
-    ss = st.session_state
-    rel_type = ss.relationship_type or "connection"
-    conversation_so_far = [m for m in ss.messages if m["role"] in ("user", "assistant")]
-    if not ss.user_portrait and conversation_so_far:
-        ss.user_portrait = extract_user_portrait(conversation_so_far)
-        _backfill_live_traits_from_portrait(ss.user_portrait)
-    if not ss.proposition_data.get("relationship_type") and conversation_so_far:
-        ss.proposition_data = extract_proposition(conversation_so_far, rel_type)
-    ss.stage = "profile"
-    ss.stage_messages = []
-    ss.round_count = 0
-    ss.recovery_pending = None
-    start_profile_stage()
-
-
-@st.dialog("Skip ahead to profile generation?")
-def _skip_confirmation_dialog():
-    st.markdown(
-        "Skipping ahead means we'll work with what we have so far — "
-        "your profile may be less specific or miss things that matter to you."
-    )
-    st.markdown("")
-    if st.button("Continue Chatting", type="primary", use_container_width=True):
-        st.rerun()
-    if st.button("Generate Anyway", use_container_width=True):
-        with st.spinner("Preparing your profile..."):
-            trigger_skip_to_profile()
-        st.rerun()
 
 def apply_profile_choice(which: str):
     """User picked profile A or B; commit to chat history and move to refinement."""
@@ -2366,129 +2336,7 @@ def render_scroll_to_profile_choice():
 
 
 # -----------------------------------------------------------------------
-def render_generate_profile_button():
-    """Inject a 'Generate Profile' button fixed next to the chat input.
 
-    Injects a styled <button> and accompanying CSS directly into the parent
-    document.  The onclick uses setAttribute so it runs in the parent
-    document's JS context (immune to stale-iframe closures).
-    """
-    user_msg_count = sum(1 for m in st.session_state.messages if m["role"] == "user")
-    stage = st.session_state.get("stage", "intro")
-    show = user_msg_count >= 2 and stage not in ("profile", "refinement", "complete")
-
-    components.html(f"""
-    <script>
-    (function() {{
-        var pd = window.parent.document;
-
-        // Always clean up previous injections first
-        var old = pd.getElementById('_gen_profile_btn');
-        var oldS = pd.getElementById('_gen_profile_style');
-        if (old)  old.remove();
-        if (oldS) oldS.remove();
-
-        // --- Detect Streamlit's actual background color ----------------------
-        var appBg = '#ffffff';
-        try {{
-            var stApp = pd.querySelector('[data-testid="stAppViewContainer"]') || pd.querySelector('.stApp') || pd.body;
-            var computed = window.parent.getComputedStyle(stApp).backgroundColor;
-            if (computed && computed !== 'rgba(0, 0, 0, 0)' && computed !== 'transparent') {{
-                appBg = computed;
-            }}
-        }} catch(_) {{}}
-
-        // --- Backdrop strip (always present) --------------------------------
-        var backdrop = pd.getElementById('_chat_input_backdrop');
-        if (!backdrop) {{
-            backdrop = pd.createElement('div');
-            backdrop.id = '_chat_input_backdrop';
-            Object.assign(backdrop.style, {{
-                position:       'fixed',
-                bottom:         '0',
-                left:           '0',
-                right:          '0',
-                height:         '90px',
-                zIndex:         '98',
-                pointerEvents:  'none',
-            }});
-            pd.body.appendChild(backdrop);
-        }}
-        backdrop.style.background = appBg;
-
-        // Ensure the chat input wrapper itself has an opaque background
-        var chatWrapper = pd.querySelector('[data-testid="stChatInput"]');
-        if (chatWrapper) {{
-            chatWrapper.style.setProperty('background', appBg, 'important');
-        }}
-
-        if (!{'true' if show else 'false'}) return;
-
-        // Measure the chat input so the button matches its height
-        var chatEl = pd.querySelector('[data-testid="stChatInput"]');
-        var btnH = 46;                       // fallback height
-        if (chatEl) {{
-            var r = chatEl.getBoundingClientRect();
-            if (r.height > 20) btnH = Math.round(r.height);
-        }}
-
-        // --- CSS -----------------------------------------------------------
-        var s = pd.createElement('style');
-        s.id = '_gen_profile_style';
-        s.textContent = [
-            // Narrow chat input to make room for the button
-            '[data-testid="stChatInput"] {{',
-            '  right: calc(296px + 1% + 164px) !important;',
-            '}}',
-
-            // Same when the left sidebar is expanded
-            'section[data-testid="stSidebar"][aria-expanded="true"] ~ section[data-testid="stMain"] [data-testid="stChatInput"],',
-            'section[data-testid="stSidebar"][aria-expanded="true"] ~ div [data-testid="stChatInput"] {{',
-            '  right: calc(296px + 1% + 164px) !important;',
-            '}}',
-
-            // Button itself
-            '#_gen_profile_btn {{',
-            '  position: fixed;',
-            '  bottom: 16px;',
-            '  right: calc(296px + 1%);',
-            '  width: 152px;',
-            '  height: ' + btnH + 'px;',
-            '  z-index: 101;',
-            '  padding: 0 16px;',
-            '  border-radius: 20px;',
-            '  border: 1.5px solid #e5e7eb;',
-            '  background-color: #ffffff;',
-            '  color: #374151;',
-            '  font-size: 14px;',
-            '  font-weight: 500;',
-            '  cursor: pointer;',
-            '  box-shadow: 0 1px 6px rgba(0,0,0,0.06);',
-            '  font-family: "Source Sans Pro", sans-serif;',
-            '  transition: background-color 0.15s ease, border-color 0.15s ease;',
-            '}}',
-            '#_gen_profile_btn:hover {{',
-            '  background-color: #f3f4f6;',
-            '  border-color: #d1d5db;',
-            '}}',
-
-            // Hide on small screens
-            '@media (max-width: 768px) {{',
-            '  #_gen_profile_btn {{ display: none; }}',
-            '  [data-testid="stChatInput"] {{ right: 16px !important; }}',
-            '}}'
-        ].join('\\n');
-        pd.head.appendChild(s);
-
-        // --- Button --------------------------------------------------------
-        var btn = pd.createElement('button');
-        btn.id  = '_gen_profile_btn';
-        btn.textContent = 'Generate Profile';
-        btn.setAttribute('onclick', 'window.location.href = "?gen_profile=1"');
-        pd.body.appendChild(btn);
-    }})();
-    </script>
-    """, height=0)
 
 
 # -----------------------------------------------------------------------
@@ -2562,11 +2410,6 @@ def main():
     )
 
     init_session_state()
-
-    # "Generate Profile" uses ?gen_profile=1 — skip onboarding so main() does not st.stop() before
-    # render_chat_content opens _skip_confirmation_dialog().
-    if st.query_params.get("gen_profile") == "1":
-        st.session_state._onboarding_dismissed = True
 
     # Show onboarding modal on every fresh load (before any other UI renders)
     if not st.session_state.get("_onboarding_dismissed", False):
@@ -3203,10 +3046,6 @@ def render_chat_content():
             del st.session_state.live_traits[_removed_trait]
         st.rerun()
 
-    # "Generate Profile" skip: navigating to ?gen_profile=1 triggers the modal
-    if st.query_params.get("gen_profile") == "1":
-        st.query_params.clear()
-        _skip_confirmation_dialog()
 
     if st.session_state.stage == "intro":
         st.markdown("""
@@ -3609,22 +3448,6 @@ def render_chat_content():
         )
         if not _profile_choice:
             render_autoscroll()
-        render_generate_profile_button()
-    else:
-        # Remove backdrop and generate-profile button injected by previous stages
-        components.html("""
-        <script>
-        (function() {
-            var pd = window.parent.document;
-            var backdrop = pd.getElementById('_chat_input_backdrop');
-            if (backdrop) backdrop.remove();
-            var btn = pd.getElementById('_gen_profile_btn');
-            if (btn) btn.remove();
-            var style = pd.getElementById('_gen_profile_style');
-            if (style) style.remove();
-        })();
-        </script>
-        """, height=0)
 
 if __name__ == "__main__":
     main()
