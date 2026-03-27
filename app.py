@@ -833,7 +833,9 @@ PROFILE_VARIANT_SYSTEM_PROMPT = (
 REFINEMENT_SYSTEM_PROMPT = (
     "You are helping the user refine a {relationship_type} profile through natural conversation. "
     "When the user gives feedback, update the profile and reprint it in full — same warm prose format, no JSON. "
-    "Keep the opening line **Meet [FirstName].** as the first line unless the user explicitly asks to rename them. "
+    "Keep the opening line **Meet [FirstName], a [Age] year old [Gender].** as the first line. "
+    "If the user asks to change the name, age, or gender, update the opening line AND every mention throughout the entire profile to match — "
+    "including all pronouns (e.g. they/them → he/him, she/her, etc.) and any gendered language. "
     "React naturally as a collaborator: acknowledge what changed, and notice what else might be worth exploring. "
     "When the user is done, close warmly. "
     "Never include anything the user has flagged as a deal breaker.\n\n"
@@ -962,6 +964,11 @@ _CONFIRMATION_NEGATORS = (
     " but ", " except ", " change", " remove", " add ", " wrong", " not quite",
     " actually", " instead", " don't want", " drop ", " replace", " edit ",
     " tweak", " adjust", " delete",
+    # Start-of-sentence variants (no leading space) so they match at position 0
+    "change ", "remove ", "replace ", "edit ", "tweak ", "adjust ", "delete ",
+    "make ", "update ", "set ", "switch ",
+    # Domain-specific terms for profile edits
+    "gender", "age", "name",
 )
 
 
@@ -1960,7 +1967,10 @@ def handle_refinement(user_input):
         "role": "user",
         "content": (
             f"{user_input}\n\n"
-            "After updating the profile, briefly note what changed and suggest "
+            "IMPORTANT: Reprint the COMPLETE updated profile with ALL requested changes applied directly in the text. "
+            "Do NOT just describe the changes — actually make them in the reprinted profile. "
+            "If the user changed the gender, update the opening line, ALL pronouns, and ALL gendered language throughout. "
+            "After the full updated profile, briefly note what changed and suggest "
             "one or two things that might still be worth refining."
         )
     })
