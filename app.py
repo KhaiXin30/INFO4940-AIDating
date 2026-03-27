@@ -802,31 +802,33 @@ PROFILE_SYSTEM_PROMPT = (
 )
 
 PROFILE_VARIANT_SYSTEM_PROMPT = (
-    "You are collaboratively building a profile of the user's ideal {relationship_type} "
-    "based on everything you know about them.\n\n"
-    "IMPORTANT: Another version of this profile is being generated at the same time. "
-    "Your job is to take a DIFFERENT creative angle **in the section bodies** — different stories, "
-    "examples, career texture, and day-to-day specifics — while staying equally faithful to the "
-    "user's confirmed priorities and deal breakers. "
-    "The USER message gives the **exact** opening **Meet** line (same as the first profile); "
-    "use it verbatim — do **not** change name, age, or gender in that line.\n\n"
+    "You are building a second, alternative profile of the user's ideal {relationship_type}.\n\n"
+    "Profile A has already been written. Your job is to create Profile B — a **genuinely different person** "
+    "who would be equally compatible with the user. Same core trait requirements, completely different human.\n\n"
+    "HOW TO BE DIFFERENT:\n"
+    "- Invent a different name, age, if it fits naturally, but same gender — this is a different person, not a rewrite.\n"
+    "- Choose a contrasting life context: if Profile A is urban/intellectual, make Profile B grounded/outdoorsy or "
+    "creative/artistic. If Profile A has a desk career, give Profile B a hands-on or people-facing one.\n"
+    "- Different hobbies, routines, backstory, cultural texture, and emotional expression style.\n"
+    "- The same core TRAITS must still be present (e.g. if the user needs emotional depth, both profiles have it) "
+    "but expressed through a completely different life and personality flavour.\n\n"
     "The user's trait summary: {trait_summary}\n\n"
     "Their confirmed priorities:\n{proposition_json}\n\n"
     f"{PROFILE_SECTION_SELECTION_TEXT}"
-    "CRITICAL FOR THIS TURN: The USER message lists the exact `###` section headings and order for this profile. "
+    "CRITICAL FOR THIS TURN: The USER message lists the exact `###` section headings and order to use. "
     "Use **only** those headings — same titles, same order, no substitutions and no extra sections.\n\n"
     "STRICT RULES:\n"
-    "- The **very first line** of the profile (before any section headers) is specified in the USER message "
-    "(copy the **Meet** line exactly — same spelling, age, and gender as the first profile).\n"
+    "- The **very first line** must follow this pattern: **Meet [FirstName], a [Age] year old [Gender].** "
+    "Invent a new name/age/gender — do NOT copy Profile A's opening line.\n"
     "- After that opening line, add a blank line, then start **every** section with a Markdown H3 heading on "
     "its own line: `### Section Name` (three hashes, space, title). "
-    "Do not use bold-only lines (`**Title**`) as section headers — use ### consistently for all sections.\n"
+    "Do not use bold-only lines (`**Title**`) as section headers — use ### consistently.\n"
     "- Write in warm, engaging prose under each heading.\n"
     "- Never show JSON to the user.\n"
-    "- The top-ranked priorities from the proposition should come through clearly in the profile.\n"
+    "- The top-ranked priorities must come through clearly — but through this person's own unique life.\n"
     "- The profile must NOT include any of the user's stated deal breakers.\n"
-    "- Keep the profile grounded and specific — this should feel like a real person, not a wish list.\n"
-    "- If the last section is **Why This Person Fits You**, tie it to the user's personality and needs.\n\n"
+    "- Keep it grounded and specific — this should feel like a real, distinct person.\n"
+    "- If the last section is **Why This Person Fits You**, show why *this* person specifically is a great match.\n\n"
     f"{TRUST_RECOVERY_INSTRUCTIONS}"
 )
 
@@ -1236,20 +1238,20 @@ def _seed_match_priorities_from_portrait(portrait, conversation_context="", tens
 
     messages = [
         {"role": "system", "content": (
-            f"Based on a user's personality portrait and their conversation, infer 4-6 qualities they most "
+            f"Based on a user's personality portrait and their conversation, infer exactly 5 qualities they most "
             f"value in a partner for a {relationship_type}. "
             "Pay close attention to SPECIFIC things the user mentioned — activities, traits, behaviors, "
             "preferences. If they mentioned specific activities (e.g. badminton, hiking) or specific "
             "qualities (e.g. honest feedback, pushing them to improve), create priorities that reflect "
             "those specifics rather than generic categories.\n\n"
-            "Return ONLY a JSON array ordered from most to least important. "
+            "Return ONLY a JSON array of exactly 5 items, ordered from most to least important. "
             "Each item: {\"id\": \"snake_case_id\", \"label\": \"short phrase (2-4 words)\", "
             "\"reason\": \"one sentence explaining why this matters given what the user said\"}. "
             "You may use IDs from this list if they fit: shared_values, emotional_depth, "
             "intellectual_connection, space_independence, communication_style, humor_warmth, "
             "life_goals, reliability_trust, spontaneity, physical_chemistry. "
             "But CREATE new specific id+label+reason whenever the user's actual words suggest "
-            "something more precise. No other text."
+            "something more precise. Return ONLY the JSON array — no other text."
         )},
         {"role": "user", "content": f"Portrait:\n{portrait_text}{extra_context}"}
     ]
@@ -1257,12 +1259,30 @@ def _seed_match_priorities_from_portrait(portrait, conversation_context="", tens
     try:
         start = response.find("[")
         end = response.rfind("]") + 1
-        st.session_state.match_priorities = json.loads(response[start:end])[:6]
+        parsed = json.loads(response[start:end])
+        if len(parsed) >= 3:
+            st.session_state.match_priorities = parsed[:6]
+        else:
+            raise ValueError("too few items")
     except Exception:
-        st.session_state.match_priorities = [
-            {"id": "shared_values",   "label": "Shared Values",   "reason": ""},
-            {"id": "emotional_depth", "label": "Emotional Depth", "reason": ""},
+        # Retry once with a stricter prompt before giving up
+        retry_messages = messages + [
+            {"role": "assistant", "content": response or ""},
+            {"role": "user", "content": "Your response was not valid JSON or had too few items. Return ONLY a JSON array of exactly 5 items — nothing else."}
         ]
+        retry = call_llm(retry_messages, temperature=0.1, max_tokens=600)
+        try:
+            start = retry.find("[")
+            end = retry.rfind("]") + 1
+            st.session_state.match_priorities = json.loads(retry[start:end])[:6]
+        except Exception:
+            st.session_state.match_priorities = [
+                {"id": "shared_values",        "label": "Shared Values",        "reason": ""},
+                {"id": "emotional_depth",      "label": "Emotional Depth",      "reason": ""},
+                {"id": "communication_style",  "label": "Communication Style",  "reason": ""},
+                {"id": "reliability_trust",    "label": "Reliability & Trust",  "reason": ""},
+                {"id": "intellectual_connection", "label": "Intellectual Connection", "reason": ""},
+            ]
 
 
 _TEST_LOOKING_FOR = [
@@ -3360,40 +3380,50 @@ def render_chat_content():
                             st.error("Could not generate profiles. Please try again.")
                             st.session_state.awaiting_profile_ideas = True
                             st.rerun()
-                        variant_instruction = (
-                            "Now generate a second, clearly different alternative profile for the same "
-                            "priorities and constraints. Vary the **content under each section** — different "
-                            "stories, examples, and specifics — not the opening line or section titles.\n\n"
-                        )
+                        # Extract Profile A's opening line to derive gender and user-specified details
+                        meet_line_a = _extract_profile_meet_line(profile_a) or ""
+
                         if has_user_ideas:
-                            variant_instruction += (
-                                f"IMPORTANT: The user specifically requested these details: {user_input}. "
-                                "You MUST keep all of the user's requested details (name, age, job, vibe, etc.) "
-                                "exactly as they asked in the section bodies. Only vary the things the user did NOT specify — "
-                                "backstory, personality texture, day-to-day details, hobbies, etc. "
+                            # User gave specific requests — Profile B must honour the same name/age/vibe.
+                            # Only the section content (backstory, personality texture, etc.) varies.
+                            variant_instruction = (
+                                f"Profile A starts with: {meet_line_a}\n"
+                                f"Profile B MUST use the exact same opening line as Profile A — same name, same age, same gender:\n"
+                                f"{meet_line_a}\n\n"
+                                f"USER'S SPECIFIC REQUESTS (must be honoured in Profile B exactly as in Profile A):\n{user_input}\n"
+                                "Keep all user-specified details identical to Profile A. "
+                                "Vary ONLY the backstory, personality texture, day-to-day specifics, and how traits are expressed — "
+                                "so the two profiles feel like two different facets of the same person rather than two different people.\n\n"
                             )
-                        meet_line = _extract_profile_meet_line(profile_a)
-                        if meet_line:
-                            variant_instruction += (
-                                "OPENING LINE — Use this **exact** first line (verbatim — same name, age, gender, punctuation, "
-                                "including `**` if present), then one blank line before the first `###` section:\n"
-                                f"{meet_line}\n\n"
+                        else:
+                            # Surprise mode — Profile B is a genuinely different person, but same gender as Profile A.
+                            # Extract gender from Profile A's Meet line (e.g. "a 31 year old man" → "man")
+                            gender_hint = ""
+                            if meet_line_a:
+                                gender_hint = (
+                                    f"Profile A's opening line is: {meet_line_a}\n"
+                                    "Profile B must use the **same gender** as Profile A (extract it from the line above). "
+                                )
+                            variant_instruction = (
+                                f"{gender_hint}"
+                                "Profile B must be a DIFFERENT person — different name, different age, "
+                                "different life context (career world, hobbies, upbringing, daily rhythm). "
+                                "The same core trait requirements must be met, but through a completely different human.\n\n"
+                                "Invent a new opening line: **Meet [DifferentFirstName], a [DifferentAge] year old [SameGender].**\n\n"
                             )
                         section_order = _extract_profile_section_headers(profile_a)
                         if len(section_order) < 5:
                             section_order = list(DEFAULT_PROFILE_SECTION_FALLBACK_ORDERED)
                         variant_instruction += (
-                            "Keep the same deal breakers and ranked priorities. "
-                            "Output the full profile only.\n\n"
-                            "STRUCTURE — Profile B must use the **exact same** section titles and **exact same order** "
-                            "as listed below (mirror Profile A; do not rename or swap sections — e.g. if the list says "
-                            "'A Typical Interaction', do not write 'A Typical Day in Their Life' instead, and vice versa). "
+                            "STRUCTURE — Use the **exact same** section titles and order as Profile A "
+                            "(do not rename or swap — e.g. 'A Typical Interaction' stays 'A Typical Interaction'). "
                             "Required `###` headings, in order:\n"
                         )
                         for i, title in enumerate(section_order, 1):
                             variant_instruction += f"{i}. ### {title}\n"
                         variant_instruction += (
-                            "\nFORMAT: One `### Title` line per section, then paragraphs. "
+                            "\nOutput the full profile only. "
+                            "FORMAT: one `### Title` line per section, then paragraphs. "
                             "Do not use bold-only (**Title**) lines as section headers."
                         )
                         variant_system = PROFILE_VARIANT_SYSTEM_PROMPT.format(
