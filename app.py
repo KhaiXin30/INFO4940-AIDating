@@ -1007,6 +1007,67 @@ def _llm_classify_confirmation(user_input: str) -> bool:
     return False
 
 
+def classify_stereotype_input(user_input: str) -> dict:
+    """
+    Input-side guard for the 'anything specific in mind?' prompt.
+
+    Returns {"block": bool, "reason": str}. Blocks only when the input
+    either (A) generalizes a negative trait to a demographic group, or
+    (B) pairs a group with a trait that is distinctly tied to a known
+    harmful stereotype of that group. Individual-level preferences with
+    universal traits (shy, cute, ambitious, quiet) are allowed.
+    """
+    text = (user_input or "").strip()
+    if not text:
+        return {"block": False, "reason": ""}
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a safety classifier for a dating-profile generator. The user is describing "
+                "what they want in an ideal partner. Decide whether the request pairs a demographic "
+                "group (race, ethnicity, religion, nationality, sexual orientation, gender identity, "
+                "disability, body type, age, class) with a harmful stereotype.\n\n"
+                "Evaluate two independent signals:\n"
+                "  A. GENERALIZING FRAMING — does the phrasing attribute a trait to the GROUP as a "
+                "whole, not an individual? Cues: 'all X are', 'generally', 'typical', 'compared to', "
+                "'X women tend to be', 'unlike Y'.\n"
+                "  B. STEREOTYPE-SPECIFIC TRAIT — is the trait distinctly and harmfully associated "
+                "with that group (e.g. submissive+Asian woman, angry+Black woman, cheap+Jewish, "
+                "lazy+[group], bad-driver+Asian)? Universal traits like shy, cute, quiet, introverted, "
+                "ambitious, funny, kind do NOT count — those are requested across all demographics.\n\n"
+                "Sanity check: if you swap the demographic for a different group, does the sentence "
+                "still read as a normal partner preference? If yes across most swaps, the trait is "
+                "universal — do NOT block.\n\n"
+                "Block only if A is true, OR if B is true with high confidence. When genuinely "
+                "uncertain, prefer ALLOW.\n\n"
+                "Respond with ONLY valid JSON, no prose:\n"
+                '{"block": true|false, "reason": "<one short sentence explaining which signal fired, '
+                'or empty string if allowing>"}'
+            ),
+        },
+        {"role": "user", "content": text},
+    ]
+    response = call_llm(messages, temperature=0.0, max_tokens=120)
+    if not response:
+        # Fail open — don't block users when the classifier errors.
+        return {"block": False, "reason": ""}
+
+    try:
+        start = response.find("{")
+        end = response.rfind("}")
+        if start == -1 or end == -1:
+            return {"block": False, "reason": ""}
+        parsed = json.loads(response[start : end + 1])
+        return {
+            "block": bool(parsed.get("block", False)),
+            "reason": str(parsed.get("reason", "")).strip(),
+        }
+    except (ValueError, json.JSONDecodeError):
+        return {"block": False, "reason": ""}
+
+
 def user_signals_confirmation(user_input: str) -> bool:
     """True when the user is accepting / confirming, including 'yes, these are right'."""
     t = (user_input or "").lower().strip()
@@ -3163,10 +3224,23 @@ def render_chat_content():
             })
 
         if user_input := st.chat_input("Your response..."):
-            st.session_state.relationship_type = user_input
             st.session_state.messages.append({"role": "user", "content": user_input})
             with st.chat_message("user"):
                 st.markdown(user_input)
+
+            with st.spinner("Reviewing..."):
+                guard = classify_stereotype_input(user_input)
+            if guard["block"]:
+                refusal = (
+                    "I can't build a profile around that framing — it leans on a stereotype about "
+                    "a whole group rather than describing one person. "
+                    "Could you tell me what kind of connection you're looking for "
+                    "(e.g. romantic partner, close friend, study partner) without tying it to a group?"
+                )
+                st.session_state.messages.append({"role": "assistant", "content": refusal})
+                st.rerun()
+
+            st.session_state.relationship_type = user_input
             with st.spinner("Thinking..."):
                 response = intro_acknowledgment_message(user_input)
                 st.session_state.messages.append({"role": "assistant", "content": response})
@@ -3277,9 +3351,24 @@ def render_chat_content():
         elif st.session_state.awaiting_profile_ideas:
             if user_input := st.chat_input("Your response..."):
                 st.session_state.messages.append({"role": "user", "content": user_input})
-                st.session_state.awaiting_profile_ideas = False
                 with st.chat_message("user"):
                     st.markdown(user_input)
+
+                with st.spinner("Reviewing..."):
+                    guard = classify_stereotype_input(user_input)
+                if guard["block"]:
+                    refusal = (
+                        "I can't build a profile around that framing — it leans on a stereotype about "
+                        "a whole group rather than describing one person. "
+                        "Want to rephrase around individual traits instead? "
+                        "(e.g. personality, values, interests, lifestyle)"
+                    )
+                    st.session_state.messages.append({"role": "assistant", "content": refusal})
+                    # Keep the flag so the user stays on this step and can try again.
+                    st.session_state.awaiting_profile_ideas = True
+                    st.rerun()
+
+                st.session_state.awaiting_profile_ideas = False
 
                 relationship_type = st.session_state.proposition_data.get("relationship_type", "connection")
                 trait_summary = st.session_state.proposition_data.get("user_trait_summary", "")
