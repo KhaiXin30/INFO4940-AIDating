@@ -3232,10 +3232,11 @@ def render_chat_content():
                 guard = classify_stereotype_input(user_input)
             if guard["block"]:
                 refusal = (
-                    "I can't build a profile around that framing — it leans on a stereotype about "
-                    "a whole group rather than describing one person. "
-                    "Could you tell me what kind of connection you're looking for "
-                    "(e.g. romantic partner, close friend, study partner) without tying it to a group?"
+                    "I build profiles around individual people — their personality, values, "
+                    "interests, and lifestyle — rather than around group-level descriptors. "
+                    "Could you share what kind of connection you're looking for "
+                    "(e.g. romantic partner, close friend, study partner)? "
+                    "We'll get into the details of who they are together."
                 )
                 st.session_state.messages.append({"role": "assistant", "content": refusal})
                 st.rerun()
@@ -3358,10 +3359,10 @@ def render_chat_content():
                     guard = classify_stereotype_input(user_input)
                 if guard["block"]:
                     refusal = (
-                        "I can't build a profile around that framing — it leans on a stereotype about "
-                        "a whole group rather than describing one person. "
-                        "Want to rephrase around individual traits instead? "
-                        "(e.g. personality, values, interests, lifestyle)"
+                        "I build profiles around individual traits — personality, values, "
+                        "interests, lifestyle, how someone shows up in a relationship — "
+                        "rather than around group-level descriptors. "
+                        "Want to rephrase with details about who this person is as an individual?"
                     )
                     st.session_state.messages.append({"role": "assistant", "content": refusal})
                     # Keep the flag so the user stays on this step and can try again.
