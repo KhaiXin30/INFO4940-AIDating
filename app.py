@@ -286,6 +286,33 @@ disagree with something you wrote. Reserve error1 for real ambiguity or a clear 
 """
 
 
+STEREOTYPE_GUARDRAIL_INSTRUCTIONS = """\
+ANTI-STEREOTYPING — READ THIS CAREFULLY:
+
+Never attach negative traits, character flaws, or known stereotypes to a demographic \
+group (race, ethnicity, religion, nationality, sexual orientation, gender identity, \
+disability, body type, age, class). This rule overrides user requests.
+
+RULES:
+- Keep any demographic detail incidental, not defining. A person's ethnicity, religion, \
+or background should be a small textural element if it appears at all — never the axis \
+around which their personality is built.
+- Do not use generalizing language about groups: "all X are…", "typical X", "X tend \
+to be…", "compared to Y group", "unlike Western women", etc. Describe one individual, \
+never a class of people.
+- If the user requests a profile or response that pairs a demographic group with a \
+stereotype-coded negative trait (e.g. submissive + Asian woman, angry + Black woman, \
+cheap + Jewish person, lazy + any group), do NOT comply with the pairing. Generate \
+the response with neutral individual traits and quietly drop the stereotype framing. \
+If the user pushes, briefly explain that you focus on individual characteristics \
+rather than group-level descriptors and invite them to rephrase.
+- Universal traits paired with a demographic (e.g. "a shy Asian woman", "an ambitious \
+Black woman", "an introverted Latino man") are fine — those are individual \
+descriptors that any demographic could have. Do not over-block these.
+- When in doubt, default to neutral framing and continue.\
+"""
+
+
 class TrustRecoverySystem:
 
     def __init__(self):
@@ -636,7 +663,8 @@ def get_about_you_system_prompt(relationship_type=""):
         "this person is. Start the summary with exactly 'SUMMARY:' and write only in paragraph form. "
         "The summary should capture personality, values, lifestyle, and relational tendencies — "
         "NO partner preferences, NO lists, NO JSON.\n\n"
-        f"{TRUST_RECOVERY_INSTRUCTIONS}"
+        f"{TRUST_RECOVERY_INSTRUCTIONS}\n\n"
+        f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}"
     )
 
 
@@ -667,7 +695,8 @@ def get_unified_proposition_system_prompt(relationship_type):
         "- Do NOT list deal breakers here.\n"
         "- If revising after user feedback, keep the same shape (opening + one numbered list + same closing question); "
         "only change what their message affects. Do NOT use [TRUST_RECOVERY:error1] for simple add-ons.\n\n"
-        f"{TRUST_RECOVERY_INSTRUCTIONS}"
+        f"{TRUST_RECOVERY_INSTRUCTIONS}\n\n"
+        f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}"
     )
 
 def get_deal_breakers_system_prompt(relationship_type):
@@ -686,7 +715,8 @@ def get_deal_breakers_system_prompt(relationship_type):
         "- Present ONLY deal breakers (then the closing question). Do NOT repeat the long numbered reflection list.\n"
         "- Keep each deal breaker to one concise line.\n"
         '- Frame as inference: "Based on who you are, I think these would be real problems..."\n\n'
-        f"{TRUST_RECOVERY_INSTRUCTIONS}"
+        f"{TRUST_RECOVERY_INSTRUCTIONS}\n\n"
+        f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}"
     )
 
 
@@ -711,7 +741,8 @@ TENSION_SYSTEM_PROMPT = (
     "- If things already feel clear before turn 3, you may write [RESOLVED] on its own line and add a brief warm closing "
     "with **no** question — otherwise keep probing until turn 3.\n\n"
     "Do not resolve tensions for them — let the user think through them.\n\n"
-    f"{TRUST_RECOVERY_INSTRUCTIONS}"
+    f"{TRUST_RECOVERY_INSTRUCTIONS}\n\n"
+    f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}"
 )
 
 # If Profile A's ### headings cannot be parsed (<5), Profile B falls back to this list (generic romantic-ish mix).
@@ -798,7 +829,8 @@ PROFILE_SYSTEM_PROMPT = (
     "- Keep the profile grounded and specific — this should feel like a real person, not a wish list.\n"
     "- When you include **Why This Person Fits You**, make it the **final** section and tie it to "
     "the user's personality and needs.\n\n"
-    f"{TRUST_RECOVERY_INSTRUCTIONS}"
+    f"{TRUST_RECOVERY_INSTRUCTIONS}\n\n"
+    f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}"
 )
 
 PROFILE_VARIANT_SYSTEM_PROMPT = (
@@ -829,7 +861,8 @@ PROFILE_VARIANT_SYSTEM_PROMPT = (
     "- The profile must NOT include any of the user's stated deal breakers.\n"
     "- Keep it grounded and specific — this should feel like a real, distinct person.\n"
     "- If the last section is **Why This Person Fits You**, show why *this* person specifically is a great match.\n\n"
-    f"{TRUST_RECOVERY_INSTRUCTIONS}"
+    f"{TRUST_RECOVERY_INSTRUCTIONS}\n\n"
+    f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}"
 )
 
 REFINEMENT_SYSTEM_PROMPT = (
@@ -842,6 +875,8 @@ REFINEMENT_SYSTEM_PROMPT = (
     "When the user is done, close warmly. "
     "Never include anything the user has flagged as a deal breaker.\n\n"
     + TRUST_RECOVERY_INSTRUCTIONS
+    + "\n\n"
+    + STEREOTYPE_GUARDRAIL_INSTRUCTIONS
 )
 
 USER_PORTRAIT_EXTRACTION_PROMPT = (
@@ -1001,7 +1036,7 @@ def _llm_classify_confirmation(user_input: str) -> bool:
         },
         {"role": "user", "content": user_input},
     ]
-    response = call_llm(messages, temperature=0.0, max_tokens=10)
+    response = call_llm(messages, temperature=0.0, max_tokens=3000)
     if response:
         return "confirm" in response.strip().lower()
     return False
@@ -1009,63 +1044,178 @@ def _llm_classify_confirmation(user_input: str) -> bool:
 
 def classify_stereotype_input(user_input: str) -> dict:
     """
-    Input-side guard for the 'anything specific in mind?' prompt.
+    Input-side guard for stereotype detection across all conversational stages.
 
-    Returns {"block": bool, "reason": str}. Blocks only when the input
-    either (A) generalizes a negative trait to a demographic group, or
-    (B) pairs a group with a trait that is distinctly tied to a known
-    harmful stereotype of that group. Individual-level preferences with
-    universal traits (shy, cute, ambitious, quiet) are allowed.
+    Returns {"tier": "pass"|"clarify"|"block", "reason": str}.
+
+    Tiers:
+      - "pass":    clean. No demographic referenced, OR demographic paired
+                   with a universal individual trait (shy, kind, ambitious).
+      - "clarify": ambiguous. Describes one individual but the trait or
+                   framing brushes against a stereotype (e.g. gender-coded
+                   provider/caretaker expectations) — give the user a
+                   chance to clarify intent.
+      - "block":   clear. Either generalizing language about a group ("all X",
+                   "typical X", "compared to Y") or a trait distinctly tied
+                   to a known harmful stereotype of the named group.
     """
     text = (user_input or "").strip()
     if not text:
-        return {"block": False, "reason": ""}
+        return {"tier": "pass", "reason": ""}
 
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a safety classifier for a dating-profile generator. The user is describing "
-                "what they want in an ideal partner. Decide whether the request pairs a demographic "
-                "group (race, ethnicity, religion, nationality, sexual orientation, gender identity, "
-                "disability, body type, age, class) with a harmful stereotype.\n\n"
-                "Evaluate two independent signals:\n"
-                "  A. GENERALIZING FRAMING — does the phrasing attribute a trait to the GROUP as a "
-                "whole, not an individual? Cues: 'all X are', 'generally', 'typical', 'compared to', "
-                "'X women tend to be', 'unlike Y'.\n"
-                "  B. STEREOTYPE-SPECIFIC TRAIT — is the trait distinctly and harmfully associated "
-                "with that group (e.g. submissive+Asian woman, angry+Black woman, cheap+Jewish, "
-                "lazy+[group], bad-driver+Asian)? Universal traits like shy, cute, quiet, introverted, "
-                "ambitious, funny, kind do NOT count — those are requested across all demographics.\n\n"
-                "Sanity check: if you swap the demographic for a different group, does the sentence "
-                "still read as a normal partner preference? If yes across most swaps, the trait is "
-                "universal — do NOT block.\n\n"
-                "Block only if A is true, OR if B is true with high confidence. When genuinely "
-                "uncertain, prefer ALLOW.\n\n"
+                "You are a safety classifier for a dating-profile generator. Use a strict "
+                "three-ingredient definition of malicious stereotyping.\n\n"
+                "MALICIOUS STEREOTYPING requires ALL THREE simultaneously:\n"
+                "  1. A DEMOGRAPHIC GROUP is named or implied (race, ethnicity, religion, "
+                "nationality, sexual orientation, gender, disability, body type, age, class).\n"
+                "  2. A TRAIT, BEHAVIOR, or EXPECTATION is attached to that group — not just "
+                "mentioning the group, but ascribing something specific to it.\n"
+                "  3. The attachment is HARMFUL — it reinforces a documented negative stereotype, "
+                "treats group membership as defining individual character, or generalizes in a "
+                "way that diminishes individuals.\n\n"
+                "If any one ingredient is missing, it is NOT malicious stereotyping → PASS.\n\n"
+                "CRITICAL GATE — INGREDIENT 2:\n"
+                "Before flagging anything, check whether a trait/behavior/expectation is actually "
+                "being attached to the group. If the user is only MENTIONING a demographic "
+                "(population observation, setting observation, preference for someone in that "
+                "group, empirical observation used as a strategy), no trait is attached and the "
+                "message is PASS — regardless of how casually the demographic is named.\n\n"
+                "Examples that PASS because ingredient 2 is missing (no trait attached):\n"
+                "  - 'a lot of men play basketball' — pure population observation, no strategy or "
+                "trait-prediction\n"
+                "  - 'my church has many singles' — setting observation\n"
+                "  - 'I want a male partner' — group-membership preference, no additional trait\n"
+                "  - 'I'd like to date someone Jewish' — group-membership preference\n\n"
+                "Examples that PASS because ingredient 3 is missing (trait is universal/benign):\n"
+                "  - 'a shy Asian woman' — 'shy' is a universal individual trait, not "
+                "stereotype-distinctive\n"
+                "  - 'an ambitious Black woman' — 'ambitious' is universal\n"
+                "  - 'a quiet Latino man' — universal trait\n"
+                "  - 'a cute Korean girl' — 'cute' is universal\n\n"
+                "CLARIFY — all three ingredients are arguably present but intent is genuinely "
+                "ambiguous between personal preference and group expectation:\n"
+                "  (i) Implicit role expectations stated as individual preference:\n"
+                "    - 'he should have a lot of money' — implicit gender + provider expectation\n"
+                "    - 'she should cook for me' — implicit gender + caretaker expectation\n"
+                "    - 'he should be tall and protective' — masculine-protector framing\n"
+                "    - 'easily find many men there' — group mention with subtle objectifying tone\n"
+                "  (ii) STRATEGIC GROUP REASONING — the user's logic treats group membership as "
+                "predictive of a behavior, and uses that prediction as a personal strategy. Even "
+                "if each part is individually benign, the reasoning encodes a soft stereotype:\n"
+                "    - 'I play basketball because men play basketball, to find a male partner'\n"
+                "    - 'I go to bars because men hang out there'\n"
+                "    - 'I joined this hobby since most [group] do it' (using the group as a target)\n"
+                "  Distinguish from pure observation: 'a lot of men play basketball' (PASS) vs. "
+                "'I play basketball because men play basketball' (CLARIFY) — the second uses the "
+                "group's behavior as a predicate for the user's own choice.\n\n"
+                "BLOCK — all three ingredients clearly present, harm is unambiguous:\n"
+                "  (A) Generalizing language: 'all X are', 'X tend to be', 'typical X', "
+                "'compared to Y group', 'unlike Y', 'generally subservient', '[group] usually...' "
+                "where '...' is a trait, not a behavior like 'play basketball'.\n"
+                "  (B) Trait distinctly tied to a known harmful stereotype of the named group: "
+                "submissive+Asian woman, angry+Black woman, cheap+Jewish, lazy+[group], "
+                "bad-driver+Asian, aggressive+Black man, 'knows her place'+woman, etc.\n"
+                "  (C) RACIAL/ETHNIC ACTIVITY STEREOTYPES — pairing a racial or ethnic group "
+                "with a stereotyped activity, profession, or skill, even when stated casually. "
+                "These are documented stereotypes regardless of framing:\n"
+                "    - Black men + basketball / athletics\n"
+                "    - Asian + math / violin / engineering\n"
+                "    - Jewish + finance / money management\n"
+                "    - Mexican + landscaping / construction\n"
+                "    - Italian + mafia / cooking\n"
+                "    - Indian + tech support / convenience stores\n"
+                "    - Irish + drinking\n"
+                "  The pairing itself is the harm — these are BLOCK even without 'all' or "
+                "'typical' language. The same activity attached to gender alone (e.g. 'most men "
+                "play basketball') is CLARIFY at most, not BLOCK, because it lacks the racial "
+                "stereotype baggage.\n\n"
+                "DECISION ALGORITHM:\n"
+                "  Step 1: Is a demographic group referenced? If no → PASS.\n"
+                "  Step 2: Is a trait, behavior, or expectation attached to the group?\n"
+                "          If no (just mentioning, observing, or preferring membership) → PASS.\n"
+                "  Step 3: Is the attached trait harmful?\n"
+                "          - Universal trait (shy, kind, ambitious, etc.) → PASS.\n"
+                "          - Empirical/observational behavior (plays basketball, lives in cities) "
+                "→ PASS.\n"
+                "          - Could be either personal preference or group generalization → CLARIFY.\n"
+                "          - Clearly reinforces a documented harmful stereotype OR uses generalizing "
+                "language → BLOCK.\n\n"
+                "TIE-BREAKING:\n"
+                "  - When between PASS and CLARIFY → prefer PASS.\n"
+                "  - When between CLARIFY and BLOCK → prefer CLARIFY (give benefit of the doubt).\n\n"
                 "Respond with ONLY valid JSON, no prose:\n"
-                '{"block": true|false, "reason": "<one short sentence explaining which signal fired, '
-                'or empty string if allowing>"}'
+                '{"tier": "pass"|"clarify"|"block", "reason": "<one short sentence naming which '
+                'ingredient is or is not present>"}'
             ),
         },
         {"role": "user", "content": text},
     ]
-    response = call_llm(messages, temperature=0.0, max_tokens=120)
+    response = call_llm(messages, temperature=0.0, max_tokens=5000)
     if not response:
         # Fail open — don't block users when the classifier errors.
-        return {"block": False, "reason": ""}
+        return {"tier": "pass", "reason": ""}
 
     try:
         start = response.find("{")
         end = response.rfind("}")
         if start == -1 or end == -1:
-            return {"block": False, "reason": ""}
+            return {"tier": "pass", "reason": ""}
         parsed = json.loads(response[start : end + 1])
+        tier = str(parsed.get("tier", "pass")).strip().lower()
+        if tier not in ("pass", "clarify", "block"):
+            tier = "pass"
         return {
-            "block": bool(parsed.get("block", False)),
+            "tier": tier,
             "reason": str(parsed.get("reason", "")).strip(),
         }
     except (ValueError, json.JSONDecodeError):
-        return {"block": False, "reason": ""}
+        return {"tier": "pass", "reason": ""}
+
+
+GENERIC_STEREOTYPE_REFUSAL = (
+    "I build profiles around individual people — their personality, values, "
+    "interests, and lifestyle — rather than around group-level descriptors. "
+    "Could you rephrase with details about this person as an individual?"
+)
+
+GENERIC_STEREOTYPE_CLARIFY = (
+    "Could you say a bit more about what you mean? I want to make sure I "
+    "capture this as your preference for this person specifically rather "
+    "than a general expectation."
+)
+
+
+def run_stereotype_guard(
+    user_input: str,
+    refusal: str = GENERIC_STEREOTYPE_REFUSAL,
+    clarify_question: str = GENERIC_STEREOTYPE_CLARIFY,
+) -> bool:
+    """
+    Single entry point for the input-side stereotype guard.
+
+    Runs the 3-tier classifier on the user's message:
+      - "pass":    return False; caller proceeds normally.
+      - "clarify": append `clarify_question` and return True.
+      - "block":   append `refusal` and return True.
+
+    Caller should typically follow up with st.rerun() on True, plus any
+    stage-specific state preservation (e.g. keeping awaiting_* flags set).
+
+    Pass stage-specific `refusal` and `clarify_question` strings for
+    tailored redirection; otherwise generic messages are used.
+    """
+    with st.spinner("Reviewing..."):
+        guard = classify_stereotype_input(user_input)
+    tier = guard.get("tier", "pass")
+    if tier == "pass":
+        return False
+    msg = clarify_question if tier == "clarify" else refusal
+    st.session_state.messages.append({"role": "assistant", "content": msg})
+    return True
 
 
 def user_signals_confirmation(user_input: str) -> bool:
@@ -1644,7 +1794,7 @@ def handle_about_you(user_input):
         return  # Do not fire another LLM call this turn; let the user drive next
 
     with st.spinner("Thinking..."):
-        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
+        ai_response = call_llm(st.session_state.stage_messages, max_tokens=4000)
 
     if ai_response:
         st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
@@ -3228,17 +3378,20 @@ def render_chat_content():
             with st.chat_message("user"):
                 st.markdown(user_input)
 
-            with st.spinner("Reviewing..."):
-                guard = classify_stereotype_input(user_input)
-            if guard["block"]:
-                refusal = (
-                    "I build profiles around individual people — their personality, values, "
-                    "interests, and lifestyle — rather than around group-level descriptors. "
-                    "Could you share what kind of connection you're looking for "
-                    "(e.g. romantic partner, close friend, study partner)? "
-                    "We'll get into the details of who they are together."
-                )
-                st.session_state.messages.append({"role": "assistant", "content": refusal})
+            intro_refusal = (
+                "I build profiles around individual people — their personality, values, "
+                "interests, and lifestyle — rather than around group-level descriptors. "
+                "Could you share what kind of connection you're looking for "
+                "(e.g. romantic partner, close friend, study partner)? "
+                "We'll get into the details of who they are together."
+            )
+            intro_clarify = (
+                "Could you say a bit more about what kind of connection you're looking for? "
+                "I want to make sure I understand what matters to you specifically — "
+                "things like the kind of relationship (romantic partner, close friend, "
+                "study partner), and we'll get into the personal details of who they are together."
+            )
+            if run_stereotype_guard(user_input, refusal=intro_refusal, clarify_question=intro_clarify):
                 st.rerun()
 
             st.session_state.relationship_type = user_input
@@ -3249,7 +3402,7 @@ def render_chat_content():
                 system_msg = {"role": "system", "content": get_about_you_system_prompt(st.session_state.relationship_type)}
                 initial_user = {"role": "user", "content": f"Hi — I'm looking for: {st.session_state.relationship_type}"}
                 st.session_state.stage_messages = [system_msg, initial_user]
-                ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
+                ai_response = call_llm(st.session_state.stage_messages, max_tokens=4000)
                 if ai_response:
                     st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
                     ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
@@ -3274,9 +3427,41 @@ def render_chat_content():
                 _render_skip_button(_skip_placeholder)
             if user_input:
                 st.session_state.messages.append({"role": "user", "content": user_input})
-                st.session_state.stage_messages.append({"role": "user", "content": user_input})
                 with st.chat_message("user"):
                     st.markdown(user_input)
+
+                # Find the AI's last question so we can echo it back in the refusal/clarify.
+                last_question = next(
+                    (m["content"] for m in reversed(st.session_state.messages[:-1])
+                     if m["role"] == "assistant"),
+                    None,
+                )
+                about_you_clarify = (
+                    "Could you say a bit more about what you mean? I want to make sure "
+                    "I'm capturing this as your own preference rather than a general expectation."
+                )
+                if last_question:
+                    quoted_question = "\n".join(f"> {line}" for line in last_question.split("\n"))
+                    about_you_refusal = (
+                        "I focus on getting to know you as an individual rather than around "
+                        "group-level descriptors. Could you take another pass at the previous "
+                        "question, answering for yourself rather than for any group?\n\n"
+                        f"{quoted_question}"
+                    )
+                else:
+                    about_you_refusal = (
+                        "I focus on getting to know you as an individual rather than around "
+                        "group-level descriptors. Want to share more about your own "
+                        "personality, values, or how you experience connection?"
+                    )
+                if run_stereotype_guard(
+                    user_input,
+                    refusal=about_you_refusal,
+                    clarify_question=about_you_clarify,
+                ):
+                    st.rerun()
+
+                st.session_state.stage_messages.append({"role": "user", "content": user_input})
 
                 # If a trust recovery was signalled on the previous turn, resolve it now
                 # and return — do not fire another LLM call on the same turn.
@@ -3288,7 +3473,7 @@ def render_chat_content():
                     st.rerun()
 
                 with st.spinner("Thinking..."):
-                    ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
+                    ai_response = call_llm(st.session_state.stage_messages, max_tokens=4000)
                 if ai_response:
                     st.session_state.recovery_pending = trust_recovery.ai_signals_recovery(ai_response)
                     ai_response = TrustRecoverySystem.strip_recovery_tag(ai_response)
@@ -3355,16 +3540,22 @@ def render_chat_content():
                 with st.chat_message("user"):
                     st.markdown(user_input)
 
-                with st.spinner("Reviewing..."):
-                    guard = classify_stereotype_input(user_input)
-                if guard["block"]:
-                    refusal = (
-                        "I build profiles around individual traits — personality, values, "
-                        "interests, lifestyle, how someone shows up in a relationship — "
-                        "rather than around group-level descriptors. "
-                        "Want to rephrase with details about who this person is as an individual?"
-                    )
-                    st.session_state.messages.append({"role": "assistant", "content": refusal})
+                profile_ideas_refusal = (
+                    "I build profiles around individual traits — personality, values, "
+                    "interests, lifestyle, how someone shows up in a relationship — "
+                    "rather than around group-level descriptors. "
+                    "Want to rephrase with details about who this person is as an individual?"
+                )
+                profile_ideas_clarify = (
+                    "Could you say a bit more about what you mean? I want to capture this "
+                    "as a detail about this specific person rather than a general assumption "
+                    "— think personality, values, interests, lifestyle, vibe."
+                )
+                if run_stereotype_guard(
+                    user_input,
+                    refusal=profile_ideas_refusal,
+                    clarify_question=profile_ideas_clarify,
+                ):
                     # Keep the flag so the user stays on this step and can try again.
                     st.session_state.awaiting_profile_ideas = True
                     st.rerun()
@@ -3545,11 +3736,27 @@ def render_chat_content():
                 st.rerun()
 
     elif st.session_state.stage == "refinement":
+        refinement_refusal = (
+            "I won't apply edits that pair a demographic group with a stereotype-coded trait. "
+            "I can update individual traits — name, age, personality, interests, lifestyle, "
+            "how this person shows up in a relationship — instead. What would you like to change?"
+        )
+        refinement_clarify = (
+            "Could you clarify what you mean before I make this edit? I want to make sure "
+            "I'm changing this for this specific person rather than encoding a general "
+            "assumption. What is it about this trait that matters to you?"
+        )
         if st.session_state.get("awaiting_initial_refinement", False):
             if user_input := st.chat_input("Your response (or 'done' to finish)..."):
-                st.session_state.awaiting_initial_refinement = False
                 with st.chat_message("user"):
                     st.markdown(user_input)
+                if run_stereotype_guard(
+                    user_input,
+                    refusal=refinement_refusal,
+                    clarify_question=refinement_clarify,
+                ):
+                    st.rerun()
+                st.session_state.awaiting_initial_refinement = False
                 handle_refinement(user_input)
                 st.rerun()
 
@@ -3558,6 +3765,12 @@ def render_chat_content():
             if user_input := st.chat_input("Your response (or 'done' to finish)..."):
                 with st.chat_message("user"):
                     st.markdown(user_input)
+                if run_stereotype_guard(
+                    user_input,
+                    refusal=refinement_refusal,
+                    clarify_question=refinement_clarify,
+                ):
+                    st.rerun()
                 handle_refinement(user_input)
                 st.rerun()
 
