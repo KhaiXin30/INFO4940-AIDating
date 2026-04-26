@@ -1213,6 +1213,15 @@ def run_stereotype_guard(
     tier = guard.get("tier", "pass")
     if tier == "pass":
         return False
+    # Mark the just-appended user message as flagged so downstream LLM contexts
+    # (priority seeding, deal-breaker generation, profile generation) can filter
+    # it out. Caller is expected to have appended user_input to messages before
+    # invoking the guard.
+    msgs = st.session_state.messages
+    if (msgs
+            and msgs[-1].get("role") == "user"
+            and msgs[-1].get("content") == user_input):
+        msgs[-1]["flagged"] = True
     msg = clarify_question if tier == "clarify" else refusal
     st.session_state.messages.append({"role": "assistant", "content": msg})
     return True
@@ -1875,14 +1884,14 @@ def start_proposition_stage():
     st.session_state.awaiting_deal_breakers = False
     st.session_state.deal_breakers_confirmed = False
 
-    # Build conversation context from chat history
+    # Build conversation context from chat history (excluding flagged input)
     conversation_context = "\n".join(
         f"{m['role'].upper()}: {m['content']}"
         for m in st.session_state.messages
-        if m["role"] in ("user", "assistant")
+        if m["role"] in ("user", "assistant") and not m.get("flagged")
     )
 
-    # Extract tension clarifications specifically
+    # Extract tension clarifications specifically (excluding flagged input)
     tension_context = ""
     in_tension = False
     tension_exchanges = []
@@ -1894,7 +1903,7 @@ def start_proposition_stage():
         if "Thanks for working through that with me" in content:
             in_tension = False
             continue
-        if in_tension and msg["role"] in ("user", "assistant"):
+        if in_tension and msg["role"] in ("user", "assistant") and not msg.get("flagged"):
             tension_exchanges.append(f"{msg['role'].upper()}: {content}")
     if tension_exchanges:
         tension_context = "\n".join(tension_exchanges)
@@ -2183,7 +2192,8 @@ def start_refinement_stage():
     ]
 
 def handle_refinement(user_input):
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    # Note: caller appends user_input to messages before invoking this so the
+    # stereotype guard can mark it as flagged when needed. Don't double-append.
 
     # Treat confirmation phrases like "yes" / "looks good" / "that's right" as done — same as "done".
     # Keep exit / quit / finished for users who type those explicitly.
@@ -2991,10 +3001,11 @@ def render_priority_ranking():
 
         with st.spinner("Moving on to deal breakers..."):
             # Build conversation + tension context for deal breaker generation
+            # (excluding flagged input)
             _db_conversation = "\n".join(
                 f"{m['role'].upper()}: {m['content']}"
                 for m in st.session_state.messages
-                if m["role"] in ("user", "assistant")
+                if m["role"] in ("user", "assistant") and not m.get("flagged")
             )
             _db_tension = ""
             _in_t = False
@@ -3007,7 +3018,7 @@ def render_priority_ranking():
                 if "Thanks for working through that with me" in _content:
                     _in_t = False
                     continue
-                if _in_t and _msg["role"] in ("user", "assistant"):
+                if _in_t and _msg["role"] in ("user", "assistant") and not _msg.get("flagged"):
                     _t_exchanges.append(f"{_msg['role'].upper()}: {_content}")
             if _t_exchanges:
                 _db_tension = "\n".join(_t_exchanges)
@@ -3590,7 +3601,7 @@ def render_chat_content():
                     for v in st.session_state.get("live_traits", {}).values()
                 ) or "(not captured)"
 
-                # Extract tension clarifications from chat history
+                # Extract tension clarifications from chat history (excluding flagged input)
                 tension_block = ""
                 in_tension = False
                 tension_exchanges = []
@@ -3602,7 +3613,7 @@ def render_chat_content():
                     if "Thanks for working through that with me" in content:
                         in_tension = False
                         continue
-                    if in_tension and msg["role"] in ("user", "assistant"):
+                    if in_tension and msg["role"] in ("user", "assistant") and not msg.get("flagged"):
                         tension_exchanges.append(f"{msg['role'].upper()}: {content}")
                 if tension_exchanges:
                     tension_block = f"\n\nCLARIFICATIONS (important nuances the user explained about themselves):\n" + "\n".join(tension_exchanges)
@@ -3748,6 +3759,7 @@ def render_chat_content():
         )
         if st.session_state.get("awaiting_initial_refinement", False):
             if user_input := st.chat_input("Your response (or 'done' to finish)..."):
+                st.session_state.messages.append({"role": "user", "content": user_input})
                 with st.chat_message("user"):
                     st.markdown(user_input)
                 if run_stereotype_guard(
@@ -3763,6 +3775,7 @@ def render_chat_content():
         # Normal refinement loop
         else:
             if user_input := st.chat_input("Your response (or 'done' to finish)..."):
+                st.session_state.messages.append({"role": "user", "content": user_input})
                 with st.chat_message("user"):
                     st.markdown(user_input)
                 if run_stereotype_guard(
