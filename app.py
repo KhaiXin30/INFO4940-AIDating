@@ -1072,13 +1072,17 @@ _DEMOGRAPHIC_MARKER_TERMS = (
     "non-binary", "nonbinary", "trans",
     # gendered pronouns — implicit demographic markers per the classifier prompt
     "he", "she", "him", "her", "his", "hers",
-    # race / ethnicity / regional origin
-    "asian", "black", "white", "latino", "latina", "latinx", "hispanic", "mexican",
-    "chinese", "japanese", "korean", "vietnamese", "filipino", "indian", "pakistani",
-    "arab", "persian", "iranian", "jewish", "european", "african",
+    # race / ethnicity / regional origin (singular and plural)
+    "asian", "asians", "black", "blacks", "white", "whites",
+    "latino", "latinos", "latina", "latinas", "latinx", "hispanic", "hispanics",
+    "mexican", "mexicans", "chinese", "japanese", "korean", "vietnamese",
+    "filipino", "filipinos", "indian", "indians", "pakistani", "pakistanis",
+    "arab", "arabs", "persian", "persians", "iranian", "iranians",
+    "jewish", "european", "europeans", "african", "africans",
     "caribbean", "indigenous",
-    # religion
-    "muslim", "christian", "catholic", "hindu", "buddhist", "sikh",
+    # religion (singular and plural)
+    "muslim", "muslims", "christian", "christians", "catholic", "catholics",
+    "hindu", "hindus", "buddhist", "buddhists", "sikh", "sikhs",
 )
 _DEMOGRAPHIC_MARKER_PHRASES = ("middle eastern", "native american")
 _DEMOGRAPHIC_MARKER_RE = re.compile(
@@ -1368,6 +1372,91 @@ def classify_stereotype_input(
         }
     except (ValueError, json.JSONDecodeError):
         return {"tier": "pass", "reason": ""}
+
+
+OUTPUT_STEREOTYPE_CUTOFF = 0.7
+
+OUTPUT_STEREOTYPE_CLARIFY = (
+    "Did you mean a personality trait rather than something tied to their background? "
+    "Could you tell me more about what you had in mind?"
+)
+
+OUTPUT_STEREOTYPE_CLARIFY_REFINEMENT = (
+    "Did you mean a personality trait rather than something tied to their background? "
+    "What were you looking to change?"
+)
+
+
+def classify_stereotype_output(profile_text: str) -> dict:
+    """
+    Output-side guard: score a generated profile for harmful stereotyping.
+
+    Returns {"score": float, "flagged": bool, "reason": str}.
+
+    Two-stage approach:
+      1. Deterministic fast-path BLOCK: explicit stereotype-coded word appears
+         alongside a demographic marker in the same paragraph → score 1.0.
+      2. LLM scoring for the ambiguous middle: asks for a 0–1 probability;
+         fails open (score 0.0) if parsing fails to avoid false positives.
+
+    Flagged when score >= OUTPUT_STEREOTYPE_CUTOFF (0.7).
+    """
+    text = (profile_text or "").strip()
+    if not text:
+        return {"score": 0.0, "flagged": False, "reason": ""}
+
+    # Fast-path: check each paragraph independently so a single bad paragraph
+    # doesn't require the whole profile to contain both signals.
+    for paragraph in re.split(r"\n{2,}", text):
+        if _EXPLICIT_STEREOTYPE_RE.search(paragraph) and _has_demographic_marker(paragraph):
+            return {
+                "score": 1.0,
+                "flagged": True,
+                "reason": "explicit stereotype-coded trait paired with a demographic group",
+            }
+
+    # LLM scoring for subtle cases.
+    scoring_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a safety classifier for a dating-profile generator. "
+                "Rate how strongly the following generated profile associates any demographic group "
+                "(race, ethnicity, religion, nationality, gender, age, disability, body type, class) "
+                "with a harmful stereotype — meaning a negative, reductive, or group-defining trait "
+                "rather than an individual characteristic.\n\n"
+                "Score 0–1 where:\n"
+                "  0.0 = completely clean, no demographic group tied to any stereotype\n"
+                "  0.5 = ambiguous framing that could imply a stereotype but intent is unclear\n"
+                "  1.0 = clearly associates a demographic group with a harmful stereotype\n\n"
+                "Universal individual traits (shy, kind, ambitious, introverted, etc.) attached to "
+                "a named character are NOT stereotyping — they describe one person.\n"
+                "Only flag if the profile implies that a trait is characteristic of a demographic "
+                "group or uses generalizing language ('all X', 'typical X', 'X tend to').\n\n"
+                "Reply with ONLY valid JSON, no prose:\n"
+                '{"score": <float 0-1>, "reason": "<one short sentence>"}'
+            ),
+        },
+        {"role": "user", "content": text},
+    ]
+
+    response = call_llm(scoring_messages, temperature=0.0, max_tokens=100)
+    if not response:
+        return {"score": 0.0, "flagged": False, "reason": ""}
+
+    try:
+        start = response.find("{")
+        end = response.rfind("}")
+        if start == -1 or end == -1:
+            return {"score": 0.0, "flagged": False, "reason": ""}
+        parsed = json.loads(response[start : end + 1])
+        score = float(parsed.get("score", 0.0))
+        score = max(0.0, min(1.0, score))
+        reason = str(parsed.get("reason", "")).strip()
+        flagged = score >= OUTPUT_STEREOTYPE_CUTOFF
+        return {"score": score, "flagged": flagged, "reason": reason}
+    except (ValueError, json.JSONDecodeError):
+        return {"score": 0.0, "flagged": False, "reason": ""}
 
 
 GENERIC_STEREOTYPE_REFUSAL = (
@@ -2484,13 +2573,32 @@ def handle_refinement(user_input):
                 ]
                 st.session_state.last_feedback = None
         else:
-            st.session_state.stage_messages.append({"role": "assistant", "content": clean_response})
-            st.session_state.messages.append({"role": "assistant", "content": clean_response})
-            # Store only the profile itself — strip "What changed:" / suggestions / "*Updated:" notes
             profile_only = _strip_refinement_notes(clean_response)
-            st.session_state.profile_text = profile_only
-            st.session_state.frozen_profile = profile_only
-            st.session_state.last_feedback = user_input
+            is_profile = bool(
+                re.search(r'\*\*Meet\b', profile_only)
+                or re.search(r'^###\s', profile_only, re.MULTILINE)
+            )
+            if not is_profile:
+                # LLM returned a refusal or clarification rather than a profile —
+                # show it in chat but never overwrite the approved profile_text.
+                st.session_state.stage_messages.append({"role": "assistant", "content": clean_response})
+                st.session_state.messages.append({"role": "assistant", "content": clean_response})
+            else:
+                output_check = classify_stereotype_output(profile_only)
+                print(f"[OUTPUT GUARD] Refinement score={output_check['score']:.2f} flagged={output_check['flagged']} | {output_check['reason']}")
+                if output_check["flagged"]:
+                    # Remove the biased user message from stage_messages so the next LLM
+                    # call doesn't see an unanswered stereotyped request in its context.
+                    if st.session_state.stage_messages and st.session_state.stage_messages[-1]["role"] == "user":
+                        st.session_state.stage_messages.pop()
+                    st.session_state.messages.append({"role": "assistant", "content": OUTPUT_STEREOTYPE_CLARIFY_REFINEMENT})
+                    # profile_text and frozen_profile remain unchanged
+                else:
+                    st.session_state.stage_messages.append({"role": "assistant", "content": clean_response})
+                    st.session_state.messages.append({"role": "assistant", "content": clean_response})
+                    st.session_state.profile_text = profile_only
+                    st.session_state.frozen_profile = profile_only
+                    st.session_state.last_feedback = user_input
 
 # -------------------------------
 # MAIN UI
@@ -4006,6 +4114,14 @@ def render_chat_content():
                             st.error("Could not generate profiles. Please try again.")
                             st.session_state.awaiting_profile_ideas = True
                             st.rerun()
+
+                        output_check_a = classify_stereotype_output(profile_a)
+                        print(f"[OUTPUT GUARD] Profile A score={output_check_a['score']:.2f} flagged={output_check_a['flagged']} | {output_check_a['reason']}")
+                        if output_check_a["flagged"]:
+                            st.session_state.messages.append({"role": "assistant", "content": OUTPUT_STEREOTYPE_CLARIFY})
+                            st.session_state.awaiting_profile_ideas = True
+                            st.rerun()
+
                         # Extract Profile A's opening line to derive gender and user-specified details
                         meet_line_a = _extract_profile_meet_line(profile_a) or ""
 
@@ -4065,6 +4181,13 @@ def render_chat_content():
                         profile_b = call_llm(messages_alt, temperature=0.92, max_tokens=3000)
                         if not profile_b:
                             st.error("Could not generate a second profile. Please try again.")
+                            st.session_state.awaiting_profile_ideas = True
+                            st.rerun()
+
+                        output_check_b = classify_stereotype_output(profile_b)
+                        print(f"[OUTPUT GUARD] Profile B score={output_check_b['score']:.2f} flagged={output_check_b['flagged']} | {output_check_b['reason']}")
+                        if output_check_b["flagged"]:
+                            st.session_state.messages.append({"role": "assistant", "content": OUTPUT_STEREOTYPE_CLARIFY})
                             st.session_state.awaiting_profile_ideas = True
                             st.rerun()
 
