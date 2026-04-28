@@ -3695,16 +3695,19 @@ def render_chat_content():
                 if last_question:
                     quoted_question = "\n".join(f"> {line}" for line in last_question.split("\n"))
                     about_you_refusal = (
-                        "I focus on getting to know you as an individual rather than around "
-                        "group-level descriptors. Could you take another pass at the previous "
-                        "question, answering for yourself rather than for any group?\n\n"
+                        "I can't help create profiles that link demographics to "
+                        "stereotype-based traits. I can help if you rephrase using "
+                        "individual qualities for yourself (personality, values, interests, "
+                        "and relationship style). Could you take another pass at the "
+                        "previous question?\n\n"
                         f"{quoted_question}"
                     )
                 else:
                     about_you_refusal = (
-                        "I focus on getting to know you as an individual rather than around "
-                        "group-level descriptors. Want to share more about your own "
-                        "personality, values, or how you experience connection?"
+                        "I can't help create profiles that link demographics to "
+                        "stereotype-based traits. Could you share your own individual "
+                        "qualities instead (personality, values, interests, and how you "
+                        "experience connection)?"
                     )
                 if run_stereotype_guard(
                     user_input,
