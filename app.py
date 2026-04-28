@@ -870,7 +870,20 @@ REFINEMENT_SYSTEM_PROMPT = (
     "When the user gives feedback, update the profile and reprint it in full — same warm prose format, no JSON. "
     "Keep the opening line **Meet [FirstName], a [Age] year old [Gender].** as the first line. "
     "If the user asks to change the name, age, or gender, update the opening line AND every mention throughout the entire profile to match — "
-    "including all pronouns (e.g. they/them → he/him, she/her, etc.) and any gendered language. "
+    "including all pronouns (e.g. they/them → he/him, she/her, etc.) and any gendered language.\n\n"
+    "CRITICAL — DO NOT CHANGE WHAT THE USER DID NOT ASK ABOUT:\n"
+    "The opening line has THREE separate attributes: name, age, gender. If the user's edit "
+    "mentions only ONE of them, change ONLY that one — leave the other two EXACTLY as they "
+    "were in the previous opening line. Examples:\n"
+    "  - 'Make her 23' → update age to 23. KEEP the same name. KEEP the same gender (still "
+    "her/she, no flip to him/he).\n"
+    "  - 'Change the name to Alex' → update name only. KEEP the same age and gender.\n"
+    "  - 'Make him a woman' → update gender only (and pronouns throughout). KEEP the same "
+    "name and age.\n"
+    "When you re-emit the 'Meet [Name], a [Age] year old [Gender]' line, copy the unchanged "
+    "attributes verbatim from the previous version. Do NOT regenerate or hallucinate them. "
+    "Same rule applies to physical descriptors (height, hair color, etc.) elsewhere in the "
+    "profile — only touch what the user asked about.\n\n"
     "React naturally as a collaborator: acknowledge what changed, and notice what else might be worth exploring. "
     "When the user is done, close warmly. "
     "Never include anything the user has flagged as a deal breaker.\n\n"
@@ -1042,11 +1055,21 @@ def _llm_classify_confirmation(user_input: str) -> bool:
     return False
 
 
-def classify_stereotype_input(user_input: str) -> dict:
+def classify_stereotype_input(user_input: str, context: dict | None = None) -> dict:
     """
     Input-side guard for stereotype detection across all conversational stages.
 
     Returns {"tier": "pass"|"clarify"|"block", "reason": str}.
+
+    `context` (optional) carries conversation state so the classifier can
+    detect euphemistic restatements that look benign in isolation:
+      - "established_demographic": str — the demographic framing already set
+        for the partner (typically from relationship_type, e.g. "Asian female
+        romantic partner"). When present, traits the user attaches to "a
+        partner" / "they" effectively attach to that demographic group.
+      - "prior_flagged": list[str] — earlier user messages that were already
+        flagged as clarify/block. Useful for catching softened restatements
+        of a previously rejected stereotype-coded trait.
 
     Tiers:
       - "pass":    clean. No demographic referenced, OR demographic paired
@@ -1063,21 +1086,98 @@ def classify_stereotype_input(user_input: str) -> dict:
     if not text:
         return {"tier": "pass", "reason": ""}
 
+    context = context or {}
+    established_demographic = (context.get("established_demographic") or "").strip()
+    prior_flagged = [s for s in (context.get("prior_flagged") or []) if s]
+
+    context_block = ""
+    if established_demographic or prior_flagged:
+        parts = ["\nCONVERSATION CONTEXT (use this when judging the current message):"]
+        if established_demographic:
+            parts.append(
+                f'  - The user has already established the partner framing as: '
+                f'"{established_demographic}". When the current message attaches a '
+                f'trait, behavior, or expectation to "a partner", "they", "them", '
+                f'"someone", or similar, treat that trait as attached to this '
+                f'established demographic frame. The demographic is implicit but '
+                f'load-bearing — ingredient 1 is satisfied by the established frame.'
+            )
+        if prior_flagged:
+            joined = "; ".join(f'"{m}"' for m in prior_flagged[-3:])
+            parts.append(
+                f"  - Earlier flagged messages from this same user: {joined}. "
+                f"If the current message is a softened, compressed, or "
+                f"euphemistic restatement of the same stereotype-coded trait "
+                f"(e.g. 'submissive' → 'listens to me well and does things they "
+                f"don't like'; 'obedient' → 'goes along with whatever I want'), "
+                f"the harm is the SAME and the tier should be the same. Do not "
+                f"let euphemism downgrade the classification."
+            )
+        context_block = "\n".join(parts) + "\n"
+
     messages = [
         {
             "role": "system",
             "content": (
                 "You are a safety classifier for a dating-profile generator. Use a strict "
                 "three-ingredient definition of malicious stereotyping.\n\n"
+                f"{context_block}"
                 "MALICIOUS STEREOTYPING requires ALL THREE simultaneously:\n"
                 "  1. A DEMOGRAPHIC GROUP is named or implied (race, ethnicity, religion, "
-                "nationality, sexual orientation, gender, disability, body type, age, class).\n"
+                "nationality, sexual orientation, gender, disability, body type, age, class). "
+                "IMPLICIT demographic markers count too: pronouns ('he', 'she'), AND "
+                "CULTURALLY-CODED NAMES that strongly signal a specific ethnicity or origin "
+                "(Ying, Mei, Wei, Lin, Hiroshi, Priya, Rajesh, Aisha, Fatima, Jamal, Tyrone, "
+                "Mohammed, Olga, Giovanni, etc.). A name that carries clear ethnic/regional "
+                "signal IS a demographic marker even without 'Asian' / 'Black' / etc. being "
+                "typed.\n"
                 "  2. A TRAIT, BEHAVIOR, or EXPECTATION is attached to that group — not just "
                 "mentioning the group, but ascribing something specific to it.\n"
                 "  3. The attachment is HARMFUL — it reinforces a documented negative stereotype, "
                 "treats group membership as defining individual character, or generalizes in a "
                 "way that diminishes individuals.\n\n"
                 "If any one ingredient is missing, it is NOT malicious stereotyping → PASS.\n\n"
+                "WATCH FOR COMPRESSED PHRASINGS — users sometimes soften a blocked stereotype "
+                "by removing explicit framing. The harm is in the pairing, not the syntax. "
+                "Examples that all encode the same Asian-housewife stereotype and should all "
+                "BLOCK:\n"
+                "  - 'Ying who is female and does not have a job and can be a housewife'\n"
+                "  - 'Ying who does not have a job and can be a housewife'\n"
+                "  - 'Ying, housewife' — culturally-coded name + traditional domestic role, "
+                "compressed but stereotype intact\n"
+                "  - 'Mei, stay-at-home wife'\n"
+                "  - 'Priya, traditional homemaker'\n"
+                "Apply the same logic to other compressed pairings: culturally-coded name + "
+                "stereotype-coded role/trait = same tier as the explicit version.\n\n"
+                "EUPHEMISTIC RESTATEMENT — users sometimes get blocked once and then "
+                "rephrase the same stereotype-coded trait in softer, behavioral, or "
+                "self-justifying language. The trait is the same; only the wording is "
+                "softer. Read past the surface phrasing to the underlying expectation "
+                "being attached to the demographic. Examples that should all be treated "
+                "as the SAME stereotype-coded trait:\n"
+                "  - 'submissive' ≡ 'listens to me well and does things they don't enjoy', "
+                "'goes along with what I want', 'doesn't push back', 'always agrees', "
+                "'easy-going about whatever I choose', 'lets me lead', 'compliant'\n"
+                "  - 'obedient' ≡ 'always says yes', 'follows my preferences'\n"
+                "  - 'docile' ≡ 'never argues', 'quiet and agreeable'\n"
+                "  - 'serves me' ≡ 'takes care of me', 'puts my needs first', 'cooks and "
+                "cleans for me'\n"
+                "When the conversation context shows a demographic frame is already "
+                "established (e.g. relationship_type = 'Asian female romantic partner') "
+                "AND the current message attaches one of these euphemized patterns to "
+                "'a partner' / 'they' / 'them', the demographic frame carries through. "
+                "Treat it the same as if the user had explicitly written 'I want an "
+                "[established demographic] who [trait]'. Do NOT downgrade because the "
+                "demographic is implicit rather than re-typed.\n\n"
+                "ASYMMETRIC COMPROMISE FRAMING — phrasings like 'wants to do X with me "
+                "even though they don't like X', 'puts up with Y for me', 'goes along "
+                "with Z even when they'd rather not', 'accommodates me even when "
+                "uncomfortable' describe a one-way deference dynamic where the partner "
+                "consistently subordinates their preferences to the user's. On its own, "
+                "this is CLARIFY (could be ordinary compromise). When attached to an "
+                "established gendered or racial demographic frame (especially one with "
+                "a documented submissive stereotype), it activates that stereotype and "
+                "is BLOCK.\n\n"
                 "CRITICAL GATE — INGREDIENT 2:\n"
                 "Before flagging anything, check whether a trait/behavior/expectation is actually "
                 "being attached to the group. If the user is only MENTIONING a demographic "
@@ -1089,13 +1189,36 @@ def classify_stereotype_input(user_input: str) -> dict:
                 "trait-prediction\n"
                 "  - 'my church has many singles' — setting observation\n"
                 "  - 'I want a male partner' — group-membership preference, no additional trait\n"
-                "  - 'I'd like to date someone Jewish' — group-membership preference\n\n"
+                "  - 'I'd like to date someone Jewish' — group-membership preference\n"
+                "  - 'a male romantic partner who is black' — STACKED demographic descriptors "
+                "(gender + race), still no trait attached → PASS\n"
+                "  - 'an Asian woman in her 30s' — race + gender + age descriptors, all just "
+                "membership categories, no trait\n"
+                "  - 'a tall Jewish man' — height + religion + gender; height is a physical "
+                "descriptor not a personality trait, so this is still membership-only\n"
+                "  IMPORTANT: Stacking multiple demographic descriptors does NOT escalate the "
+                "tier. What matters is whether a TRAIT, BEHAVIOR, or EXPECTATION (personality, "
+                "values, conduct, capability, role) is attached — not how many demographic "
+                "categories the user names. A user can specify race + gender + age + religion + "
+                "body type and it stays PASS as long as no trait is attached.\n\n"
                 "Examples that PASS because ingredient 3 is missing (trait is universal/benign):\n"
                 "  - 'a shy Asian woman' — 'shy' is a universal individual trait, not "
                 "stereotype-distinctive\n"
                 "  - 'an ambitious Black woman' — 'ambitious' is universal\n"
                 "  - 'a quiet Latino man' — universal trait\n"
                 "  - 'a cute Korean girl' — 'cute' is universal\n\n"
+                "IMPORTANT — 'partner', 'romantic partner', 'spouse', 'friend', and similar "
+                "relationship-role words are NOT demographic groups. They are relationship types. "
+                "A trait attached to 'partner' alone (without explicit race, ethnicity, religion, "
+                "or gender) does NOT trigger ingredient 1. Examples that PASS:\n"
+                "  - 'I want a partner who is organized' — no demographic, universal trait\n"
+                "  - 'a romantic partner that likes to plan' — no demographic, universal trait\n"
+                "  - 'looking for someone kind and funny' — no demographic, universal traits\n"
+                "  - 'a partner who is ambitious and curious' — universal traits\n"
+                "  - 'I want a punctual romantic partner' — universal trait\n"
+                "Only escalate to CLARIFY/BLOCK when the user adds an explicit demographic "
+                "marker ('he', 'she', a race/ethnicity, a religion, a nationality) AND attaches "
+                "a stereotype-coded trait. Generic 'partner who [universal trait]' is always PASS.\n\n"
                 "CLARIFY — all three ingredients are arguably present but intent is genuinely "
                 "ambiguous between personal preference and group expectation:\n"
                 "  (i) Implicit role expectations stated as individual preference:\n"
@@ -1103,6 +1226,11 @@ def classify_stereotype_input(user_input: str) -> dict:
                 "    - 'she should cook for me' — implicit gender + caretaker expectation\n"
                 "    - 'he should be tall and protective' — masculine-protector framing\n"
                 "    - 'easily find many men there' — group mention with subtle objectifying tone\n"
+                "    - 'Sarah, housewife' — generic-female name + traditional domestic role "
+                "(no racial layer); could be a mutual life arrangement or a stereotyped "
+                "expectation\n"
+                "    - 'Emily, stay-at-home wife' — same pattern\n"
+                "    - 'I want a housewife partner' — gender + domestic role, ambiguous intent\n"
                 "  (ii) STRATEGIC GROUP REASONING — the user's logic treats group membership as "
                 "predictive of a behavior, and uses that prediction as a personal strategy. Even "
                 "if each part is individually benign, the reasoning encodes a soft stereotype:\n"
@@ -1132,7 +1260,15 @@ def classify_stereotype_input(user_input: str) -> dict:
                 "  The pairing itself is the harm — these are BLOCK even without 'all' or "
                 "'typical' language. The same activity attached to gender alone (e.g. 'most men "
                 "play basketball') is CLARIFY at most, not BLOCK, because it lacks the racial "
-                "stereotype baggage.\n\n"
+                "stereotype baggage.\n"
+                "  (D) ETHNIC NAME + TRADITIONAL DOMESTIC ROLE — when a culturally-coded female "
+                "name (Ying, Mei, Priya, Aisha, etc.) is paired with a traditional domestic "
+                "role (housewife, homemaker, stay-at-home wife, 'doesn't work', 'serves her "
+                "husband'), this activates the corresponding ethnic-housewife stereotype and is "
+                "BLOCK regardless of phrasing compression. The same role attached to a generic "
+                "'partner' or 'wife' (without an ethnic-coded name) is CLARIFY at most. "
+                "Examples that BLOCK: 'Ying, housewife', 'Mei, doesn't work', 'Priya, "
+                "stay-at-home wife', 'Aisha, traditional homemaker'.\n\n"
                 "DECISION ALGORITHM:\n"
                 "  Step 1: Is a demographic group referenced? If no → PASS.\n"
                 "  Step 2: Is a trait, behavior, or expectation attached to the group?\n"
@@ -1189,6 +1325,47 @@ GENERIC_STEREOTYPE_CLARIFY = (
 )
 
 
+_DEMOGRAPHIC_MARKER_TERMS = (
+    # gender
+    "male", "females", "female", "males", "man", "men", "woman", "women",
+    "boy", "boys", "girl", "girls", "guy", "guys", "non-binary", "nonbinary", "trans",
+    # race / ethnicity / regional origin
+    "asian", "black", "white", "latino", "latina", "latinx", "hispanic", "mexican",
+    "chinese", "japanese", "korean", "vietnamese", "filipino", "indian", "pakistani",
+    "arab", "persian", "iranian", "jewish", "european", "african",
+    "caribbean", "indigenous",
+    # multi-word phrases handled separately
+    # religion
+    "muslim", "christian", "catholic", "hindu", "buddhist", "sikh",
+)
+
+_DEMOGRAPHIC_MARKER_PHRASES = (
+    "middle eastern",
+    "native american",
+)
+
+_DEMOGRAPHIC_MARKER_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(t) for t in _DEMOGRAPHIC_MARKER_TERMS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _has_demographic_marker(text: str) -> bool:
+    """True if `text` contains an explicit race/ethnicity/gender/religion descriptor.
+
+    Used to decide whether an established relationship framing carries a
+    demographic frame that should propagate forward when evaluating later
+    trait-attachments. Generic relationship-role words ('partner', 'friend',
+    'spouse') alone are not demographics.
+    """
+    if not text:
+        return False
+    if _DEMOGRAPHIC_MARKER_RE.search(text):
+        return True
+    lowered = text.lower()
+    return any(p in lowered for p in _DEMOGRAPHIC_MARKER_PHRASES)
+
+
 def run_stereotype_guard(
     user_input: str,
     refusal: str = GENERIC_STEREOTYPE_REFUSAL,
@@ -1208,8 +1385,31 @@ def run_stereotype_guard(
     Pass stage-specific `refusal` and `clarify_question` strings for
     tailored redirection; otherwise generic messages are used.
     """
+    # Gather conversation context so the classifier can catch euphemistic
+    # restatements that look benign in isolation. Two signals matter:
+    #   1. Established demographic framing — if relationship_type contains
+    #      explicit demographic markers (race/ethnicity/gender), traits the
+    #      user attaches to "a partner" later effectively attach to that
+    #      demographic group.
+    #   2. Prior flagged messages — if the user already tried a stereotype
+    #      and got redirected, a softened restatement of the same trait
+    #      should not slip through.
+    relationship_type = (st.session_state.get("relationship_type") or "").strip()
+    established_demographic = relationship_type if _has_demographic_marker(relationship_type) else ""
+
+    prior_flagged = [
+        m.get("content", "")
+        for m in st.session_state.get("messages", [])[:-1]  # exclude the just-appended turn
+        if m.get("role") == "user" and m.get("flagged") and m.get("content")
+    ]
+
+    context = {
+        "established_demographic": established_demographic,
+        "prior_flagged": prior_flagged,
+    }
+
     with st.spinner("Reviewing..."):
-        guard = classify_stereotype_input(user_input)
+        guard = classify_stereotype_input(user_input, context=context)
     tier = guard.get("tier", "pass")
     if tier == "pass":
         return False
@@ -1707,6 +1907,10 @@ def init_session_state():
         st.session_state.awaiting_profile_check = False
     if "awaiting_profile_ideas" not in st.session_state:
         st.session_state.awaiting_profile_ideas = False
+    if "awaiting_partner_attributes" not in st.session_state:
+        st.session_state.awaiting_partner_attributes = False
+    if "partner_attributes" not in st.session_state:
+        st.session_state.partner_attributes = ""
     if "profile_user_ideas" not in st.session_state:
         st.session_state.profile_user_ideas = None
     if "profile_check_response" not in st.session_state:
@@ -1829,7 +2033,8 @@ def handle_about_you(user_input):
             st.session_state.awaiting_summary_confirmation = True
 
 def handle_summary_confirmation(user_input):
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    # Note: caller appends user_input to messages before invoking this so the
+    # stereotype guard can mark it as flagged when needed. Don't double-append.
 
     if not user_signals_confirmation(user_input) and user_input.lower().strip() != "":
         # User gave a correction — regenerate the summary incorporating their feedback
@@ -2099,7 +2304,8 @@ def start_tension_stage():
         st.session_state.round_count = 1
 
 def handle_tension(user_input):
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    # Note: caller appends user_input to messages before invoking this so the
+    # stereotype guard can mark it as flagged when needed. Don't double-append.
     st.session_state.stage_messages.append({"role": "user", "content": user_input})
 
     # If a trust recovery was signalled on the previous turn, resolve it first
@@ -2125,7 +2331,7 @@ def handle_tension(user_input):
                 },
                 {"role": "user", "content": f"User's last response: {user_input}"}
             ]
-            wrap_up = call_llm(confirmation_msg, max_tokens=3000)
+            wrap_up = call_llm(confirmation_msg, max_tokens=4000)
             if wrap_up:
                 st.session_state.messages.append({"role": "assistant", "content": wrap_up})
             st.session_state.messages.append({"role": "assistant", "content": "Thanks for working through that with me!"})
@@ -2139,7 +2345,7 @@ def handle_tension(user_input):
     )
 
     with st.spinner("Thinking..."):
-        ai_response = call_llm(st.session_state.stage_messages, max_tokens=3000)
+        ai_response = call_llm(st.session_state.stage_messages, max_tokens=4000)
 
     if ai_response:
         # Check for trust recovery signals before displaying
@@ -3241,8 +3447,21 @@ def render_deal_breaker_ranking():
         confirmed_msg = "Great — I have everything I need. Let's build your profile."
         st.session_state.messages.append({"role": "assistant", "content": confirmed_msg})
 
+        # Ask for partner demographic / physical attributes BEFORE the profile-ideas
+        # prompt, so these are captured cleanly and the LLM can incorporate them
+        # alongside personality and lifestyle.
+        attrs_question = (
+            "Before I build the profile, are there any demographic or physical attributes "
+            "you'd like me to include?\n\n"
+            "- **Gender** (e.g. male, female, non-binary)\n"
+            "- **Ethnicity or background** (e.g. Asian, Black, Latino, Middle Eastern, white, mixed)\n"
+            "- **Physical traits** (height, body build, hair, eye color, etc.)\n\n"
+            "Share whatever feels important to you, or type **skip** if you'd like me to choose."
+        )
+        st.session_state.messages.append({"role": "assistant", "content": attrs_question})
+        st.session_state.awaiting_partner_attributes = True
+
         advance_stage()
-        start_profile_stage()
         st.rerun()
 
 
@@ -3424,8 +3643,30 @@ def render_chat_content():
     elif st.session_state.stage == "about_you":
         if st.session_state.get("awaiting_summary_confirmation", False):
             if user_input := st.chat_input("Your response..."):
+                st.session_state.messages.append({"role": "user", "content": user_input})
                 with st.chat_message("user"):
                     st.markdown(user_input)
+
+                summary_confirm_refusal = (
+                    "I can't update the summary with that addition. Our policy is to not "
+                    "associate stereotypes or assumptions with individuals based on demographic "
+                    "or personality traits — that includes adding such expectations into the "
+                    "summary even as a partner preference. The current summary stays as-is. "
+                    "If there's anything else about **you as an individual** you'd like to "
+                    "refine, share that and I'll update."
+                )
+                summary_confirm_clarify = (
+                    "Could you say a bit more about what you'd like to add or change? I want "
+                    "to make sure I'm capturing your individual personality and preferences "
+                    "rather than group-level expectations."
+                )
+                if run_stereotype_guard(
+                    user_input,
+                    refusal=summary_confirm_refusal,
+                    clarify_question=summary_confirm_clarify,
+                ):
+                    st.rerun()
+
                 handle_summary_confirmation(user_input)
                 st.rerun()
         else:
@@ -3518,8 +3759,27 @@ def render_chat_content():
         if not user_input and _skip_placeholder is not None:
             _render_skip_button(_skip_placeholder)
         if user_input:
+            st.session_state.messages.append({"role": "user", "content": user_input})
             with st.chat_message("user"):
                 st.markdown(user_input)
+
+            tension_refusal = (
+                "I focus on understanding your individual personality and how the different "
+                "parts of you fit together — rather than building around group-level descriptors. "
+                "Could you share more about how YOU experience this tension, in your own terms?"
+            )
+            tension_clarify = (
+                "Could you say a bit more about what you mean? I want to make sure I'm "
+                "capturing how you personally experience this, not a general expectation "
+                "about a group."
+            )
+            if run_stereotype_guard(
+                user_input,
+                refusal=tension_refusal,
+                clarify_question=tension_clarify,
+            ):
+                st.rerun()
+
             handle_tension(user_input)
             st.rerun()
 
@@ -3544,6 +3804,42 @@ def render_chat_content():
                 start_refinement_stage()
                 st.rerun()
             # Profile comparison is rendered above by render_profile_comparison()
+
+        elif st.session_state.get("awaiting_partner_attributes", False):
+            if user_input := st.chat_input("Your response..."):
+                st.session_state.messages.append({"role": "user", "content": user_input})
+                with st.chat_message("user"):
+                    st.markdown(user_input)
+
+                partner_attrs_refusal = (
+                    "I can't include those framings — pure demographic and physical descriptors "
+                    "(gender, ethnicity, height, build, hair, etc.) are fine, but personality, "
+                    "behavior, or role expectations should not be tied to a group. "
+                    "Want to share just the demographic/physical details, or type **skip**?"
+                )
+                partner_attrs_clarify = (
+                    "Could you say a bit more about what you mean? I'm looking for demographic "
+                    "and physical descriptors as preferences — not personality or behavior tied "
+                    "to those descriptors."
+                )
+                if run_stereotype_guard(
+                    user_input,
+                    refusal=partner_attrs_refusal,
+                    clarify_question=partner_attrs_clarify,
+                ):
+                    st.session_state.awaiting_partner_attributes = True
+                    st.rerun()
+
+                # Clean input — store and proceed to profile-ideas prompt.
+                skip_inputs = {"skip", "no", "nope", "surprise me", "surprise", ""}
+                if user_input.lower().strip() in skip_inputs:
+                    st.session_state.partner_attributes = ""
+                else:
+                    st.session_state.partner_attributes = user_input
+
+                st.session_state.awaiting_partner_attributes = False
+                start_profile_stage()
+                st.rerun()
 
         elif st.session_state.awaiting_profile_ideas:
             if user_input := st.chat_input("Your response..."):
@@ -3643,11 +3939,25 @@ def render_chat_content():
                         f"If they specified a vibe or personality detail, make it central to the profile."
                     )
 
+                partner_attributes_block = ""
+                if st.session_state.get("partner_attributes"):
+                    partner_attributes_block = (
+                        f"\n\nPARTNER DEMOGRAPHIC & PHYSICAL ATTRIBUTES (provided by user, MUST be reflected):\n"
+                        f"{st.session_state.partner_attributes}\n"
+                        f"Use these to inform the opening line (e.g. age, gender) and to weave naturally "
+                        f"into the profile (e.g. ethnicity in cultural texture, height/build in physical "
+                        f"description). Treat them as descriptors of an individual — never as definitional "
+                        f"or stereotype-coded traits. The person's personality, values, and interests come "
+                        f"from the trait summary and priorities above; the demographic/physical descriptors "
+                        f"here only describe how they look and what their background is."
+                    )
+
                 messages.append({
                     "role": "user",
                     "content": (
                         f"Generate a complete profile using all of the following confirmed information:\n\n"
                         f"{full_context}"
+                        f"{partner_attributes_block}"
                         f"{user_ideas_block}\n\n"
                         f"{name_instruction}"
                         "Then a blank line, then **5–8** sections chosen from the SECTION SELECTION options in the system prompt — "
@@ -3762,7 +4072,14 @@ def render_chat_content():
                 st.session_state.messages.append({"role": "user", "content": user_input})
                 with st.chat_message("user"):
                     st.markdown(user_input)
-                if run_stereotype_guard(
+                # Skip the guard for confirmation phrases (done, yes, looks good, exit, etc.) —
+                # they're control signals, not edit content. handle_refinement will detect them
+                # and wrap up the stage.
+                t = (user_input or "").lower().strip()
+                is_confirmation = (
+                    user_signals_confirmation(user_input) or t in {"exit", "quit", "finished"}
+                )
+                if not is_confirmation and run_stereotype_guard(
                     user_input,
                     refusal=refinement_refusal,
                     clarify_question=refinement_clarify,
@@ -3778,7 +4095,11 @@ def render_chat_content():
                 st.session_state.messages.append({"role": "user", "content": user_input})
                 with st.chat_message("user"):
                     st.markdown(user_input)
-                if run_stereotype_guard(
+                t = (user_input or "").lower().strip()
+                is_confirmation = (
+                    user_signals_confirmation(user_input) or t in {"exit", "quit", "finished"}
+                )
+                if not is_confirmation and run_stereotype_guard(
                     user_input,
                     refusal=refinement_refusal,
                     clarify_question=refinement_clarify,
