@@ -1055,21 +1055,88 @@ def _llm_classify_confirmation(user_input: str) -> bool:
     return False
 
 
-def classify_stereotype_input(user_input: str, context: dict | None = None) -> dict:
+# ── Deterministic gates around the classifier ─────────────────────────────
+# The local LLM is unreliable on the long classifier prompt — it tends to
+# over-flag pure demographic descriptors as CLARIFY. To avoid that, we wrap
+# the LLM with two deterministic short-circuits:
+#   1. Fast-path BLOCK: explicit stereotype-coded word + demographic word in
+#      the same message → block immediately, no LLM call.
+#   2. Fast-path PASS: message contains no trait-attachment marker (relative
+#      clause word, expectation verb, etc.) AND no stereotype word, AND is
+#      short → pass immediately, no LLM call.
+# Everything in the ambiguous middle still runs through the LLM.
+_DEMOGRAPHIC_MARKER_TERMS = (
+    # gender
+    "male", "males", "female", "females", "man", "men", "woman", "women",
+    "boy", "boys", "girl", "girls", "guy", "guys",
+    "non-binary", "nonbinary", "trans",
+    # race / ethnicity / regional origin
+    "asian", "black", "white", "latino", "latina", "latinx", "hispanic", "mexican",
+    "chinese", "japanese", "korean", "vietnamese", "filipino", "indian", "pakistani",
+    "arab", "persian", "iranian", "jewish", "european", "african",
+    "caribbean", "indigenous",
+    # religion
+    "muslim", "christian", "catholic", "hindu", "buddhist", "sikh",
+)
+_DEMOGRAPHIC_MARKER_PHRASES = ("middle eastern", "native american")
+_DEMOGRAPHIC_MARKER_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(t) for t in _DEMOGRAPHIC_MARKER_TERMS) + r")\b",
+    re.IGNORECASE,
+)
+
+# Words and phrases that — when paired with a demographic — indicate explicit
+# stereotyping. These are unambiguous in a dating-profile context.
+_EXPLICIT_STEREOTYPE_PATTERNS = (
+    r"submissive", r"obedient", r"docile", r"subservient", r"subdued",
+    r"compliant",
+    r"exotic",
+    r"housewife", r"homemaker", r"stay[\s-]?at[\s-]?home",
+    r"knows\s+(?:her|his|their)\s+place",
+    r"no\s+opinions?\s+of\s+(?:her|his|their)\s+own",
+    r"doesn'?t\s+(?:work|have\s+a\s+job)",
+    r"does\s+not\s+(?:work|have\s+a\s+job)",
+    r"serves?\s+(?:me|her\s+husband|his\s+wife)",
+)
+_EXPLICIT_STEREOTYPE_RE = re.compile(
+    r"\b(?:" + "|".join(_EXPLICIT_STEREOTYPE_PATTERNS) + r")\b",
+    re.IGNORECASE,
+)
+
+# Markers that suggest a trait/behavior/expectation is being attached to
+# someone. If none of these are present, the message is almost certainly
+# pure descriptors (no trait attachment) and safe to fast-path PASS.
+_TRAIT_ATTACHMENT_MARKER_RE = re.compile(
+    r"\b(?:"
+    r"who|that|which|"
+    r"should|shouldn'?t|must|mustn'?t|"
+    r"need|needs|needed|"
+    r"has\s+to|have\s+to|had\s+to|"
+    r"supposed\s+to|"
+    r"always|never|only|"
+    r"even\s+(?:though|when|if)|"
+    r"willing\s+to|"
+    r"and\s+(?:is|are|has|have|likes?|wants?|does|act\w*|enjoys?|prefers?|loves?|hates?)|"
+    r"doesn'?t|don'?t|didn'?t|"
+    r"because"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _has_demographic_marker(text: str) -> bool:
+    if not text:
+        return False
+    if _DEMOGRAPHIC_MARKER_RE.search(text):
+        return True
+    lowered = text.lower()
+    return any(p in lowered for p in _DEMOGRAPHIC_MARKER_PHRASES)
+
+
+def classify_stereotype_input(user_input: str) -> dict:
     """
     Input-side guard for stereotype detection across all conversational stages.
 
     Returns {"tier": "pass"|"clarify"|"block", "reason": str}.
-
-    `context` (optional) carries conversation state so the classifier can
-    detect euphemistic restatements that look benign in isolation:
-      - "established_demographic": str — the demographic framing already set
-        for the partner (typically from relationship_type, e.g. "Asian female
-        romantic partner"). When present, traits the user attaches to "a
-        partner" / "they" effectively attach to that demographic group.
-      - "prior_flagged": list[str] — earlier user messages that were already
-        flagged as clarify/block. Useful for catching softened restatements
-        of a previously rejected stereotype-coded trait.
 
     Tiers:
       - "pass":    clean. No demographic referenced, OR demographic paired
@@ -1081,39 +1148,37 @@ def classify_stereotype_input(user_input: str, context: dict | None = None) -> d
       - "block":   clear. Either generalizing language about a group ("all X",
                    "typical X", "compared to Y") or a trait distinctly tied
                    to a known harmful stereotype of the named group.
+
+    Two deterministic fast-paths run before the LLM:
+      - explicit stereotype word + demographic → BLOCK
+      - no trait-attachment markers + short → PASS
     """
     text = (user_input or "").strip()
     if not text:
         return {"tier": "pass", "reason": ""}
 
-    context = context or {}
-    established_demographic = (context.get("established_demographic") or "").strip()
-    prior_flagged = [s for s in (context.get("prior_flagged") or []) if s]
+    has_demo = _has_demographic_marker(text)
+    has_stereotype = bool(_EXPLICIT_STEREOTYPE_RE.search(text))
+    has_trait_marker = bool(_TRAIT_ATTACHMENT_MARKER_RE.search(text))
 
-    context_block = ""
-    if established_demographic or prior_flagged:
-        parts = ["\nCONVERSATION CONTEXT (use this when judging the current message):"]
-        if established_demographic:
-            parts.append(
-                f'  - The user has already established the partner framing as: '
-                f'"{established_demographic}". When the current message attaches a '
-                f'trait, behavior, or expectation to "a partner", "they", "them", '
-                f'"someone", or similar, treat that trait as attached to this '
-                f'established demographic frame. The demographic is implicit but '
-                f'load-bearing — ingredient 1 is satisfied by the established frame.'
-            )
-        if prior_flagged:
-            joined = "; ".join(f'"{m}"' for m in prior_flagged[-3:])
-            parts.append(
-                f"  - Earlier flagged messages from this same user: {joined}. "
-                f"If the current message is a softened, compressed, or "
-                f"euphemistic restatement of the same stereotype-coded trait "
-                f"(e.g. 'submissive' → 'listens to me well and does things they "
-                f"don't like'; 'obedient' → 'goes along with whatever I want'), "
-                f"the harm is the SAME and the tier should be the same. Do not "
-                f"let euphemism downgrade the classification."
-            )
-        context_block = "\n".join(parts) + "\n"
+    # Fast-path BLOCK: explicit stereotype-coded trait paired with a
+    # demographic. This is unambiguous and the LLM is skipped.
+    if has_demo and has_stereotype:
+        return {
+            "tier": "block",
+            "reason": "explicit stereotype-coded trait paired with a demographic group",
+        }
+
+    # Fast-path PASS: short message with no trait-attachment marker and no
+    # stereotype-coded word. This catches pure descriptors like "Asian
+    # female romantic partner" and "I want a male partner" that the LLM
+    # tends to over-flag.
+    if (
+        not has_trait_marker
+        and not has_stereotype
+        and len(text.split()) <= 15
+    ):
+        return {"tier": "pass", "reason": "no trait attached"}
 
     messages = [
         {
@@ -1121,7 +1186,6 @@ def classify_stereotype_input(user_input: str, context: dict | None = None) -> d
             "content": (
                 "You are a safety classifier for a dating-profile generator. Use a strict "
                 "three-ingredient definition of malicious stereotyping.\n\n"
-                f"{context_block}"
                 "MALICIOUS STEREOTYPING requires ALL THREE simultaneously:\n"
                 "  1. A DEMOGRAPHIC GROUP is named or implied (race, ethnicity, religion, "
                 "nationality, sexual orientation, gender, disability, body type, age, class). "
@@ -1149,35 +1213,6 @@ def classify_stereotype_input(user_input: str, context: dict | None = None) -> d
                 "  - 'Priya, traditional homemaker'\n"
                 "Apply the same logic to other compressed pairings: culturally-coded name + "
                 "stereotype-coded role/trait = same tier as the explicit version.\n\n"
-                "EUPHEMISTIC RESTATEMENT — users sometimes get blocked once and then "
-                "rephrase the same stereotype-coded trait in softer, behavioral, or "
-                "self-justifying language. The trait is the same; only the wording is "
-                "softer. Read past the surface phrasing to the underlying expectation "
-                "being attached to the demographic. Examples that should all be treated "
-                "as the SAME stereotype-coded trait:\n"
-                "  - 'submissive' ≡ 'listens to me well and does things they don't enjoy', "
-                "'goes along with what I want', 'doesn't push back', 'always agrees', "
-                "'easy-going about whatever I choose', 'lets me lead', 'compliant'\n"
-                "  - 'obedient' ≡ 'always says yes', 'follows my preferences'\n"
-                "  - 'docile' ≡ 'never argues', 'quiet and agreeable'\n"
-                "  - 'serves me' ≡ 'takes care of me', 'puts my needs first', 'cooks and "
-                "cleans for me'\n"
-                "When the conversation context shows a demographic frame is already "
-                "established (e.g. relationship_type = 'Asian female romantic partner') "
-                "AND the current message attaches one of these euphemized patterns to "
-                "'a partner' / 'they' / 'them', the demographic frame carries through. "
-                "Treat it the same as if the user had explicitly written 'I want an "
-                "[established demographic] who [trait]'. Do NOT downgrade because the "
-                "demographic is implicit rather than re-typed.\n\n"
-                "ASYMMETRIC COMPROMISE FRAMING — phrasings like 'wants to do X with me "
-                "even though they don't like X', 'puts up with Y for me', 'goes along "
-                "with Z even when they'd rather not', 'accommodates me even when "
-                "uncomfortable' describe a one-way deference dynamic where the partner "
-                "consistently subordinates their preferences to the user's. On its own, "
-                "this is CLARIFY (could be ordinary compromise). When attached to an "
-                "established gendered or racial demographic frame (especially one with "
-                "a documented submissive stereotype), it activates that stereotype and "
-                "is BLOCK.\n\n"
                 "CRITICAL GATE — INGREDIENT 2:\n"
                 "Before flagging anything, check whether a trait/behavior/expectation is actually "
                 "being attached to the group. If the user is only MENTIONING a demographic "
@@ -1325,47 +1360,6 @@ GENERIC_STEREOTYPE_CLARIFY = (
 )
 
 
-_DEMOGRAPHIC_MARKER_TERMS = (
-    # gender
-    "male", "females", "female", "males", "man", "men", "woman", "women",
-    "boy", "boys", "girl", "girls", "guy", "guys", "non-binary", "nonbinary", "trans",
-    # race / ethnicity / regional origin
-    "asian", "black", "white", "latino", "latina", "latinx", "hispanic", "mexican",
-    "chinese", "japanese", "korean", "vietnamese", "filipino", "indian", "pakistani",
-    "arab", "persian", "iranian", "jewish", "european", "african",
-    "caribbean", "indigenous",
-    # multi-word phrases handled separately
-    # religion
-    "muslim", "christian", "catholic", "hindu", "buddhist", "sikh",
-)
-
-_DEMOGRAPHIC_MARKER_PHRASES = (
-    "middle eastern",
-    "native american",
-)
-
-_DEMOGRAPHIC_MARKER_RE = re.compile(
-    r"\b(?:" + "|".join(re.escape(t) for t in _DEMOGRAPHIC_MARKER_TERMS) + r")\b",
-    re.IGNORECASE,
-)
-
-
-def _has_demographic_marker(text: str) -> bool:
-    """True if `text` contains an explicit race/ethnicity/gender/religion descriptor.
-
-    Used to decide whether an established relationship framing carries a
-    demographic frame that should propagate forward when evaluating later
-    trait-attachments. Generic relationship-role words ('partner', 'friend',
-    'spouse') alone are not demographics.
-    """
-    if not text:
-        return False
-    if _DEMOGRAPHIC_MARKER_RE.search(text):
-        return True
-    lowered = text.lower()
-    return any(p in lowered for p in _DEMOGRAPHIC_MARKER_PHRASES)
-
-
 def run_stereotype_guard(
     user_input: str,
     refusal: str = GENERIC_STEREOTYPE_REFUSAL,
@@ -1385,31 +1379,8 @@ def run_stereotype_guard(
     Pass stage-specific `refusal` and `clarify_question` strings for
     tailored redirection; otherwise generic messages are used.
     """
-    # Gather conversation context so the classifier can catch euphemistic
-    # restatements that look benign in isolation. Two signals matter:
-    #   1. Established demographic framing — if relationship_type contains
-    #      explicit demographic markers (race/ethnicity/gender), traits the
-    #      user attaches to "a partner" later effectively attach to that
-    #      demographic group.
-    #   2. Prior flagged messages — if the user already tried a stereotype
-    #      and got redirected, a softened restatement of the same trait
-    #      should not slip through.
-    relationship_type = (st.session_state.get("relationship_type") or "").strip()
-    established_demographic = relationship_type if _has_demographic_marker(relationship_type) else ""
-
-    prior_flagged = [
-        m.get("content", "")
-        for m in st.session_state.get("messages", [])[:-1]  # exclude the just-appended turn
-        if m.get("role") == "user" and m.get("flagged") and m.get("content")
-    ]
-
-    context = {
-        "established_demographic": established_demographic,
-        "prior_flagged": prior_flagged,
-    }
-
     with st.spinner("Reviewing..."):
-        guard = classify_stereotype_input(user_input, context=context)
+        guard = classify_stereotype_input(user_input)
     tier = guard.get("tier", "pass")
     if tier == "pass":
         return False
@@ -3653,7 +3624,7 @@ def render_chat_content():
                     "or personality traits — that includes adding such expectations into the "
                     "summary even as a partner preference. The current summary stays as-is. "
                     "If there's anything else about **you as an individual** you'd like to "
-                    "refine, share that and I'll update."
+                    "refine, share that and I'll update. If not, please write done."
                 )
                 summary_confirm_clarify = (
                     "Could you say a bit more about what you'd like to add or change? I want "
