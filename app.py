@@ -1070,6 +1070,8 @@ _DEMOGRAPHIC_MARKER_TERMS = (
     "male", "males", "female", "females", "man", "men", "woman", "women",
     "boy", "boys", "girl", "girls", "guy", "guys",
     "non-binary", "nonbinary", "trans",
+    # gendered pronouns — implicit demographic markers per the classifier prompt
+    "he", "she", "him", "her", "his", "hers",
     # race / ethnicity / regional origin
     "asian", "black", "white", "latino", "latina", "latinx", "hispanic", "mexican",
     "chinese", "japanese", "korean", "vietnamese", "filipino", "indian", "pakistani",
@@ -1132,11 +1134,20 @@ def _has_demographic_marker(text: str) -> bool:
     return any(p in lowered for p in _DEMOGRAPHIC_MARKER_PHRASES)
 
 
-def classify_stereotype_input(user_input: str) -> dict:
+def classify_stereotype_input(
+    user_input: str,
+    established_demographic: str = "",
+) -> dict:
     """
     Input-side guard for stereotype detection across all conversational stages.
 
     Returns {"tier": "pass"|"clarify"|"block", "reason": str}.
+
+    `established_demographic` (optional): a demographic frame already set
+    earlier in the conversation (typically `relationship_type` once it's
+    been confirmed). Used ONLY by the BLOCK fast-path: if the current
+    message contains an explicit stereotype word and a demographic was
+    previously established, BLOCK. Never used to upgrade to CLARIFY.
 
     Tiers:
       - "pass":    clean. No demographic referenced, OR demographic paired
@@ -1149,9 +1160,10 @@ def classify_stereotype_input(user_input: str) -> dict:
                    "typical X", "compared to Y") or a trait distinctly tied
                    to a known harmful stereotype of the named group.
 
-    Two deterministic fast-paths run before the LLM:
-      - explicit stereotype word + demographic → BLOCK
-      - no trait-attachment markers + short → PASS
+    Three deterministic fast-paths run before the LLM:
+      - explicit stereotype word + (in-message OR established) demographic → BLOCK
+      - no demographic + no stereotype word → PASS
+      - demographic-only descriptors, short, no markers → PASS
     """
     text = (user_input or "").strip()
     if not text:
@@ -1160,19 +1172,30 @@ def classify_stereotype_input(user_input: str) -> dict:
     has_demo = _has_demographic_marker(text)
     has_stereotype = bool(_EXPLICIT_STEREOTYPE_RE.search(text))
     has_trait_marker = bool(_TRAIT_ATTACHMENT_MARKER_RE.search(text))
+    established_demo_present = _has_demographic_marker(established_demographic)
 
     # Fast-path BLOCK: explicit stereotype-coded trait paired with a
-    # demographic. This is unambiguous and the LLM is skipped.
-    if has_demo and has_stereotype:
+    # demographic — either named in this message OR established earlier
+    # in the conversation. This catches multi-turn splits like:
+    #   T1: "I want an Asian female partner"  (sets relationship_type)
+    #   T2: "my partner should be submissive"  (stereotype, no demo word)
+    if has_stereotype and (has_demo or established_demo_present):
         return {
             "tier": "block",
             "reason": "explicit stereotype-coded trait paired with a demographic group",
         }
 
-    # Fast-path PASS: short message with no trait-attachment marker and no
-    # stereotype-coded word. This catches pure descriptors like "Asian
-    # female romantic partner" and "I want a male partner" that the LLM
-    # tends to over-flag.
+    # Fast-path PASS: no demographic referenced AND no stereotype-coded
+    # word. By the 3-ingredient rule this is PASS by definition — the LLM
+    # tends to over-flag legitimate trait preferences ("someone who
+    # doesn't listen to me") as ambiguous group expectations, so we
+    # short-circuit here.
+    if not has_demo and not has_stereotype:
+        return {"tier": "pass", "reason": "no demographic referenced"}
+
+    # Fast-path PASS: demographic referenced but message is just
+    # descriptors — short, no trait-attachment marker, no stereotype
+    # word. Catches "Asian female romantic partner" and similar.
     if (
         not has_trait_marker
         and not has_stereotype
@@ -1379,8 +1402,17 @@ def run_stereotype_guard(
     Pass stage-specific `refusal` and `clarify_question` strings for
     tailored redirection; otherwise generic messages are used.
     """
+    # Carry forward an established demographic frame from relationship_type
+    # so multi-turn splits like "Asian female partner" → later "submissive"
+    # still hit the BLOCK fast-path. This is only used by the deterministic
+    # BLOCK gate; it never upgrades to CLARIFY.
+    established_demographic = (st.session_state.get("relationship_type") or "").strip()
+
     with st.spinner("Reviewing..."):
-        guard = classify_stereotype_input(user_input)
+        guard = classify_stereotype_input(
+            user_input,
+            established_demographic=established_demographic,
+        )
     tier = guard.get("tier", "pass")
     if tier == "pass":
         return False
@@ -1466,9 +1498,27 @@ _PROGRESSIVE_LIVE_TRAITS = [
 ]
 
 
+def _is_extraction_safe(msg) -> bool:
+    """Whether a message is safe to feed into trait/portrait extraction.
+
+    Defense-in-depth filter: drops messages already flagged by the
+    stereotype guard, plus any user message whose content contains an
+    explicit stereotype word (e.g. 'submissive', 'housewife'). Even if
+    such a message passed the input gate, we don't want the extraction
+    LLM pulling labels like 'Traditional' from it into the user's portrait.
+    """
+    if msg.get("flagged"):
+        return False
+    if msg.get("role") == "user":
+        if _EXPLICIT_STEREOTYPE_RE.search(msg.get("content", "")):
+            return False
+    return True
+
+
 def extract_live_traits(stage_messages):
     """Return {dim: {label, confidence}} from conversation so far."""
-    user_turns = sum(1 for m in stage_messages if m["role"] == "user")
+    safe_messages = [m for m in stage_messages if _is_extraction_safe(m)]
+    user_turns = sum(1 for m in safe_messages if m["role"] == "user")
     if user_turns == 0:
         return {}
     if TEST_MODE:
@@ -1477,7 +1527,7 @@ def extract_live_traits(stage_messages):
 
     conversation_text = "\n".join(
         f"{m['role'].upper()}: {m['content']}"
-        for m in stage_messages
+        for m in safe_messages
         if m["role"] in ("user", "assistant")
     )
     messages = [
@@ -1786,7 +1836,7 @@ def extract_user_portrait(conversation_messages):
     conversation_text = "\n".join([
         f"{msg['role'].upper()}: {msg['content']}"
         for msg in conversation_messages
-        if msg['role'] in ['user', 'assistant']
+        if msg['role'] in ['user', 'assistant'] and _is_extraction_safe(msg)
     ])
 
     messages = [
@@ -3580,11 +3630,11 @@ def render_chat_content():
                 st.markdown(user_input)
 
             intro_refusal = (
-                "I build profiles around individual people — their personality, values, "
-                "interests, and lifestyle — rather than around group-level descriptors. "
-                "Could you share what kind of connection you're looking for "
-                "(e.g. romantic partner, close friend, study partner)? "
-                "We'll get into the details of who they are together."
+                "I can't help create profiles that link demographics to "
+                "stereotype-based traits. I can help if you rephrase using "
+                "individual qualities for yourself (personality, values, interests, "
+                "and relationship style). Could you take another pass at the "
+                "previous question?\n\n"
             )
             intro_clarify = (
                 "Could you say a bit more about what kind of connection you're looking for? "
