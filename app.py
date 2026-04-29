@@ -309,6 +309,17 @@ rather than group-level descriptors and invite them to rephrase.
 - Universal traits paired with a demographic (e.g. "a shy Asian woman", "an ambitious \
 Black woman", "an introverted Latino man") are fine — those are individual \
 descriptors that any demographic could have. Do not over-block these.
+- PHYSICAL DESCRIPTIONS: only include specific physical details (height, build, \
+hair style, eye color, facial features, etc.) that the USER explicitly provided. \
+If the user did not specify a physical detail, DO NOT invent one — keep the \
+physical description general (or omit the section entirely). Specifically: do NOT \
+auto-fill stereotype-coded physical defaults when an ethnicity is given. For \
+example, an "Asian woman" should not by default become "petite, 5'2", slender, \
+with a neat bob and dark hair" — that stacks the Western petite-Asian trope. The \
+same caution applies to other groups (do not default Black men to "tall and \
+muscular", Latina women to "curvy", Jewish men to specific features, etc.). When \
+the user has not given physical specifics, write a brief, varied, demographic-\
+neutral description or skip physical details altogether.
 - When in doubt, default to neutral framing and continue.\
 """
 
