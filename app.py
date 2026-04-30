@@ -310,6 +310,28 @@ rather than group-level descriptors and invite them to rephrase.
 - Universal traits paired with a demographic (e.g. "a shy Asian woman", "an ambitious \
 Black woman", "an introverted Latino man") are fine — those are individual \
 descriptors that any demographic could have. Do not over-block these.
+- PHYSICAL DESCRIPTIONS — KEEP THEM GENERAL, NOT FEATURE-BY-FEATURE:
+  - Use only the physical details the USER explicitly provided (e.g. "5'2", \
+"athletic", "tall"). If the user did not specify a detail, do NOT invent it. \
+Skip the details rather than fill them in.
+  - Keep any physical-description section short — 1-2 sentences MAX. A brief \
+overall impression, not a head-to-toe inventory of features.
+  - NEVER write feature-by-feature descriptions of eyes, skin, hair texture, \
+hair length, face shape, or body shape — that style of writing fetishizes \
+appearance and is especially harmful when attached to ethnicity. Examples of \
+phrasing to NEVER use: "almond-shaped eyes", "almond eyes", "porcelain skin", \
+"silky hair", "soft waves", "delicate features", "delicate frame", "doll-like", \
+"exotic beauty", "petite frame", "slender figure", "smooth dark hair", "graceful \
+neck", "warm/inviting smile illuminating her face", "her [feature] reflects her \
+[personality trait]". These are racialized fetishization patterns regardless of \
+intent.
+  - Do NOT project personality through physical features ("her eyes sparkle \
+with kindness", "her smile reflects her warmth"). Personality belongs in \
+personality sections; the physical description should describe appearance only, \
+in the most general terms.
+  - If the user provided no physical specifics and the relationship type \
+doesn't make appearance load-bearing, you may omit the physical-description \
+section entirely.
 - When in doubt, default to neutral framing and continue.\
 """
 
@@ -1094,6 +1116,7 @@ _DEMOGRAPHIC_MARKER_RE = re.compile(
 # Words and phrases that — when paired with a demographic — indicate explicit
 # stereotyping. These are unambiguous in a dating-profile context.
 _EXPLICIT_STEREOTYPE_PATTERNS = (
+    # Behavior / role stereotype words
     r"submissive", r"obedient", r"docile", r"subservient", r"subdued",
     r"compliant",
     r"exotic",
@@ -1103,6 +1126,21 @@ _EXPLICIT_STEREOTYPE_PATTERNS = (
     r"doesn'?t\s+(?:work|have\s+a\s+job)",
     r"does\s+not\s+(?:work|have\s+a\s+job)",
     r"serves?\s+(?:me|her\s+husband|his\s+wife)",
+    # Physical fetishization patterns — almost always racialized when
+    # paired with a demographic. The output guard's fast-path BLOCK
+    # fires when any of these appear in a paragraph alongside a
+    # demographic word.
+    r"almond(?:[\s-]*shaped)?\s+eyes?",
+    r"porcelain\s+skin",
+    r"silky\s+(?:hair|skin)",
+    r"doll[\s-]?like",
+    r"delicate\s+(?:features?|frame|build)",
+    r"petite\s+(?:frame|figure|build)",
+    r"slender\s+(?:frame|figure|build)",
+    r"exotic\s+(?:beauty|features?|looks?|appearance)",
+    r"smooth\s+dark\s+hair",
+    r"soft\s+waves",
+    r"graceful\s+(?:neck|posture)",
 )
 _EXPLICIT_STEREOTYPE_RE = re.compile(
     r"\b(?:" + "|".join(_EXPLICIT_STEREOTYPE_PATTERNS) + r")\b",
@@ -1370,7 +1408,7 @@ def classify_stereotype_input(
         return {"tier": "pass", "reason": ""}
 
 
-OUTPUT_STEREOTYPE_CUTOFF = 0.7
+OUTPUT_STEREOTYPE_CUTOFF = 0.5
 
 OUTPUT_STEREOTYPE_CLARIFY = (
     "Did you mean a personality trait rather than something tied to their background? "
@@ -1395,7 +1433,10 @@ def classify_stereotype_output(profile_text: str) -> dict:
       2. LLM scoring for the ambiguous middle: asks for a 0–1 probability;
          fails open (score 0.0) if parsing fails to avoid false positives.
 
-    Flagged when score >= OUTPUT_STEREOTYPE_CUTOFF (0.7).
+    Flagged when score >= OUTPUT_STEREOTYPE_CUTOFF (0.5). The bar is set
+    low because the LLM scorer tends to lowball ambiguous cases — when it
+    itself thinks "this could be seen as a stereotype" (score=0.5), that
+    is already enough signal to regenerate the profile.
     """
     text = (profile_text or "").strip()
     if not text:
@@ -1453,6 +1494,129 @@ def classify_stereotype_output(profile_text: str) -> dict:
         return {"score": score, "flagged": flagged, "reason": reason}
     except (ValueError, json.JSONDecodeError):
         return {"score": 0.0, "flagged": False, "reason": ""}
+
+
+def _scan_profile_input_for_guardrail_invocation(
+    messages: list,
+    label: str,
+) -> dict:
+    """Scan the LLM-bound profile-generation input for stereotype patterns.
+
+    Logs ``[GUARDRAIL ASKED]`` when the input materials (the user-role
+    portion of the prompt — `trait_summary`, `proposition_json`,
+    `partner_attributes`, user ideas, etc.) contain any explicit
+    stereotype-coded word AND any demographic marker. That combination
+    means the LLM is about to be asked to either reproduce a
+    stereotype pairing OR (per ``STEREOTYPE_GUARDRAIL_INSTRUCTIONS``)
+    silently drop it.
+
+    Combined with the ``[OUTPUT GUARD]`` logs, you can infer:
+      input had pattern + output flagged=False → guardrail succeeded (drop)
+      input had pattern + output flagged=True  → guardrail failed
+      input clean         + output flagged=True  → LLM hallucinated stereotype
+      input clean         + output flagged=False → no stereotype involved
+
+    Returns a dict with the matched ``stereotype_words`` and
+    ``demographic_words`` for downstream use (currently logging only).
+    """
+    # Combine non-system message content. The system prompt is the
+    # guardrail itself — we want to know what *user-side* material is
+    # being fed in, since that's where stereotype invocations originate.
+    body = "\n".join(
+        m.get("content", "")
+        for m in messages
+        if m.get("role") != "system"
+    )
+
+    stereotype_matches = sorted({m.group(0).lower() for m in _EXPLICIT_STEREOTYPE_RE.finditer(body)})
+    demographic_matches = sorted({m.group(0).lower() for m in _DEMOGRAPHIC_MARKER_RE.finditer(body)})
+    guardrail_invoked = bool(stereotype_matches and demographic_matches)
+
+    if guardrail_invoked:
+        print(
+            f"[GUARDRAIL ASKED] {label}: "
+            f"stereotype={stereotype_matches} "
+            f"demographic={demographic_matches}"
+        )
+
+    return {
+        "guardrail_invoked": guardrail_invoked,
+        "stereotype_words": stereotype_matches,
+        "demographic_words": demographic_matches,
+    }
+
+
+def generate_profile_with_retry(
+    messages: list,
+    temperature: float,
+    label: str,
+    max_attempts: int = 3,
+) -> tuple[str, dict]:
+    """Generate a profile with silent retries on output-guard flags.
+
+    Calls the LLM, scores the output via ``classify_stereotype_output``,
+    and on a flag appends a corrective instruction (citing the flag's
+    reason) before retrying. Up to ``max_attempts`` total attempts.
+
+    Token-budget note: the local model is loaded with ``n_ctx=4096``, so
+    the retry must NOT include the previous flagged profile in the
+    context — that would push attempt 2 past the ceiling. Instead, on
+    each retry we replace any previously-appended corrective message
+    with a fresh one citing only the latest flag's reason. This keeps
+    every attempt's input length within ~100 tokens of attempt 1.
+
+    Returns ``(profile_text, output_check)``. Caller surfaces a message
+    to the user only if the final ``output_check["flagged"]`` is True
+    (i.e. every retry failed).
+    """
+    # Log whether the LLM is being asked to silently drop a stereotype
+    # framing (per STEREOTYPE_GUARDRAIL_INSTRUCTIONS). Compared against
+    # the [OUTPUT GUARD] logs, this surfaces guardrail success vs failure.
+    _scan_profile_input_for_guardrail_invocation(messages, label)
+
+    base_messages = list(messages)
+    last_check = {"score": 0.0, "flagged": False, "reason": ""}
+    profile_text = ""
+
+    for attempt in range(1, max_attempts + 1):
+        if attempt == 1:
+            attempt_messages = base_messages
+        else:
+            # Add a single corrective user message for this retry.
+            # Do NOT include the previous flagged profile — that would
+            # blow past the 4096-token context window.
+            attempt_messages = base_messages + [
+                {
+                    "role": "user",
+                    "content": (
+                        "Important constraint: a prior attempt at this profile was "
+                        "flagged by an automated safety check for the following reason:\n\n"
+                        f"{last_check['reason']}\n\n"
+                        "Generate the profile WITHOUT that pattern. Describe the "
+                        "person as an autonomous individual whose traits stand on "
+                        "their own — never as representative of a demographic group, "
+                        "and never as a mirror of the user's stated relationship "
+                        "dynamics. Follow the original instructions for structure "
+                        "(Meet line, ### section headings, section order)."
+                    ),
+                },
+            ]
+
+        candidate = call_llm(attempt_messages, temperature=temperature, max_tokens=3000)
+        if not candidate:
+            return profile_text, last_check
+        profile_text = candidate
+
+        last_check = classify_stereotype_output(profile_text)
+        print(
+            f"[OUTPUT GUARD] {label} attempt {attempt}/{max_attempts} "
+            f"score={last_check['score']:.2f} flagged={last_check['flagged']} "
+            f"| {last_check['reason']}"
+        )
+        if not last_check["flagged"]:
+            return profile_text, last_check
+
+    return profile_text, last_check
 
 
 GENERIC_STEREOTYPE_REFUSAL = (
@@ -1528,17 +1692,24 @@ def _extract_stereotype_trait_from_text(text: str) -> str:
     return "unspecified"
 
 
-def log_flagged_request(user_input: str, tier: str, reason: str) -> dict:
+def log_flagged_request(
+    user_input: str,
+    tier: str,
+    reason: str,
+    response_shown: str = "",
+) -> dict:
     """Write one structured log entry for a flagged request.
 
     Fields recorded:
-      ``timestamp``     — ISO-8601 wall-clock time
-      ``stage``         — current app stage (intro, about_you, …)
-      ``prompt``        — the raw user input that was flagged
-      ``tier``          — ``"clarify"`` or ``"block"``
-      ``group_targeted``— first demographic group identified in the prompt
-      ``trait_paired``  — stereotype-coded trait identified (if any)
-      ``reason``        — classifier reason string
+      ``timestamp``      — ISO-8601 wall-clock time
+      ``stage``          — current app stage (intro, about_you, …)
+      ``prompt``         — the raw user input that was flagged
+      ``tier``           — ``"clarify"`` or ``"block"``
+      ``group_targeted`` — first demographic group identified in the prompt
+      ``trait_paired``   — stereotype-coded trait identified (if any)
+      ``reason``         — classifier reason string
+      ``response_shown`` — exact refusal/clarify text rendered to the user
+                           (lets you reconstruct what they actually saw)
 
     The entry is appended to ``st.session_state.guard_logs`` and echoed
     to stdout for server-side inspection.
@@ -1554,13 +1725,20 @@ def log_flagged_request(user_input: str, tier: str, reason: str) -> dict:
         "group_targeted": _extract_demographic_from_text(user_input),
         "trait_paired":   _extract_stereotype_trait_from_text(user_input),
         "reason":         reason,
+        "response_shown": response_shown,
     }
     st.session_state.guard_logs.append(entry)
+    # Compact one-line stdout view; truncate the response so it stays readable
+    # without losing the gist of what was rendered.
+    response_preview = (response_shown or "").replace("\n", " ").strip()
+    if len(response_preview) > 120:
+        response_preview = response_preview[:117] + "..."
     print(
-        f"[GUARD LOG] {tier.upper():7s} | "
+        f"[INPUT LOG] {tier.upper():7s} | "
         f"group={entry['group_targeted']:20s} | "
         f"trait={entry['trait_paired']:20s} | "
-        f"reason={entry['reason']}"
+        f"reason={entry['reason']} | "
+        f"shown={response_preview!r}"
     )
     return entry
 
@@ -1800,8 +1978,15 @@ def run_stereotype_guard(
             and msgs[-1].get("content") == user_input):
         msgs[-1]["flagged"] = True
 
-    # Write structured log entry
-    log_flagged_request(user_input, tier=tier, reason=reason)
+    # Write structured log entry. response_shown captures the exact text
+    # the user will see for this tier (decided below before append).
+    response_shown = clarify_question if tier == "clarify" else refusal
+    log_flagged_request(
+        user_input,
+        tier=tier,
+        reason=reason,
+        response_shown=response_shown,
+    )
 
     # Check accumulation patterns
     should_block, escalation_reason = check_accumulation_patterns()
@@ -1820,9 +2005,8 @@ def run_stereotype_guard(
         })
         return True
 
-    # Normal tier response (no escalation)
-    response_msg = clarify_question if tier == "clarify" else refusal
-    st.session_state.messages.append({"role": "assistant", "content": response_msg})
+    # Normal tier response (no escalation) — same text we logged above.
+    st.session_state.messages.append({"role": "assistant", "content": response_shown})
     return True
 
 
@@ -4428,15 +4612,16 @@ def render_chat_content():
                         profile_b = _PROFILE_MOCK_VARIANT_B
                         st.session_state.test_llm_idx = st.session_state.get("test_llm_idx", 0) + 1
                     else:
-                        profile_a = call_llm(messages, temperature=0.72, max_tokens=3000)
+                        profile_a, output_check_a = generate_profile_with_retry(
+                            messages, temperature=0.72, label="Profile A"
+                        )
                         if not profile_a:
                             st.error("Could not generate profiles. Please try again.")
                             st.session_state.awaiting_profile_ideas = True
                             st.rerun()
 
-                        output_check_a = classify_stereotype_output(profile_a)
-                        print(f"[OUTPUT GUARD] Profile A score={output_check_a['score']:.2f} flagged={output_check_a['flagged']} | {output_check_a['reason']}")
                         if output_check_a["flagged"]:
+                            # All retries still flagged — surface to user.
                             st.session_state.messages.append({"role": "assistant", "content": OUTPUT_STEREOTYPE_CLARIFY})
                             st.session_state.awaiting_profile_ideas = True
                             st.rerun()
@@ -4497,15 +4682,16 @@ def render_chat_content():
                             messages[1],
                             {"role": "user", "content": variant_instruction},
                         ]
-                        profile_b = call_llm(messages_alt, temperature=0.92, max_tokens=3000)
+                        profile_b, output_check_b = generate_profile_with_retry(
+                            messages_alt, temperature=0.92, label="Profile B"
+                        )
                         if not profile_b:
                             st.error("Could not generate a second profile. Please try again.")
                             st.session_state.awaiting_profile_ideas = True
                             st.rerun()
 
-                        output_check_b = classify_stereotype_output(profile_b)
-                        print(f"[OUTPUT GUARD] Profile B score={output_check_b['score']:.2f} flagged={output_check_b['flagged']} | {output_check_b['reason']}")
                         if output_check_b["flagged"]:
+                            # All retries still flagged — surface to user.
                             st.session_state.messages.append({"role": "assistant", "content": OUTPUT_STEREOTYPE_CLARIFY})
                             st.session_state.awaiting_profile_ideas = True
                             st.rerun()
