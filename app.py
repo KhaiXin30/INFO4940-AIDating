@@ -1,5 +1,6 @@
 import re
 import json
+import datetime
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -309,17 +310,6 @@ rather than group-level descriptors and invite them to rephrase.
 - Universal traits paired with a demographic (e.g. "a shy Asian woman", "an ambitious \
 Black woman", "an introverted Latino man") are fine — those are individual \
 descriptors that any demographic could have. Do not over-block these.
-- PHYSICAL DESCRIPTIONS: only include specific physical details (height, build, \
-hair style, eye color, facial features, etc.) that the USER explicitly provided. \
-If the user did not specify a physical detail, DO NOT invent one — keep the \
-physical description general (or omit the section entirely). Specifically: do NOT \
-auto-fill stereotype-coded physical defaults when an ethnicity is given. For \
-example, an "Asian woman" should not by default become "petite, 5'2", slender, \
-with a neat bob and dark hair" — that stacks the Western petite-Asian trope. The \
-same caution applies to other groups (do not default Black men to "tall and \
-muscular", Latina women to "curvy", Jewish men to specific features, etc.). When \
-the user has not given physical specifics, write a brief, varied, demographic-\
-neutral description or skip physical details altogether.
 - When in doubt, default to neutral framing and continue.\
 """
 
@@ -1208,165 +1198,139 @@ def classify_stereotype_input(
     if not has_demo and not has_stereotype:
         return {"tier": "pass", "reason": "no demographic referenced"}
 
-    # Fast-path PASS: demographic referenced but message is just
-    # descriptors — short, no trait-attachment marker, no stereotype
-    # word. Catches "Asian female romantic partner" and similar.
-    if (
-        not has_trait_marker
-        and not has_stereotype
-        and len(text.split()) <= 15
-    ):
-        return {"tier": "pass", "reason": "no trait attached"}
+    # NOTE: The previous short-circuit PASS for "demographic + short + no
+    # trait marker" has been removed. Any message that references a demographic
+    # group AND reaches this point is sent to the LLM for full evaluation.
+    # The only fast-paths that remain are the deterministic BLOCK above and the
+    # "no demographic AND no stereotype word" PASS above — everything else must
+    # earn a PASS from the LLM.
 
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a safety classifier for a dating-profile generator. Use a strict "
-                "three-ingredient definition of malicious stereotyping.\n\n"
-                "MALICIOUS STEREOTYPING requires ALL THREE simultaneously:\n"
+                "You are a strict safety classifier for a dating-profile generator. "
+                "Your default posture is caution: when in doubt, flag it.\n\n"
+                "WHAT YOU ARE DETECTING — THREE INGREDIENTS:\n"
                 "  1. A DEMOGRAPHIC GROUP is named or implied (race, ethnicity, religion, "
-                "nationality, sexual orientation, gender, disability, body type, age, class). "
-                "IMPLICIT demographic markers count too: pronouns ('he', 'she'), AND "
-                "CULTURALLY-CODED NAMES that strongly signal a specific ethnicity or origin "
-                "(Ying, Mei, Wei, Lin, Hiroshi, Priya, Rajesh, Aisha, Fatima, Jamal, Tyrone, "
-                "Mohammed, Olga, Giovanni, etc.). A name that carries clear ethnic/regional "
-                "signal IS a demographic marker even without 'Asian' / 'Black' / etc. being "
-                "typed.\n"
-                "  2. A TRAIT, BEHAVIOR, or EXPECTATION is attached to that group — not just "
-                "mentioning the group, but ascribing something specific to it.\n"
-                "  3. The attachment is HARMFUL — it reinforces a documented negative stereotype, "
-                "treats group membership as defining individual character, or generalizes in a "
-                "way that diminishes individuals.\n\n"
-                "If any one ingredient is missing, it is NOT malicious stereotyping → PASS.\n\n"
-                "WATCH FOR COMPRESSED PHRASINGS — users sometimes soften a blocked stereotype "
-                "by removing explicit framing. The harm is in the pairing, not the syntax. "
-                "Examples that all encode the same Asian-housewife stereotype and should all "
-                "BLOCK:\n"
-                "  - 'Ying who is female and does not have a job and can be a housewife'\n"
-                "  - 'Ying who does not have a job and can be a housewife'\n"
-                "  - 'Ying, housewife' — culturally-coded name + traditional domestic role, "
-                "compressed but stereotype intact\n"
-                "  - 'Mei, stay-at-home wife'\n"
-                "  - 'Priya, traditional homemaker'\n"
-                "Apply the same logic to other compressed pairings: culturally-coded name + "
-                "stereotype-coded role/trait = same tier as the explicit version.\n\n"
-                "CRITICAL GATE — INGREDIENT 2:\n"
-                "Before flagging anything, check whether a trait/behavior/expectation is actually "
-                "being attached to the group. If the user is only MENTIONING a demographic "
-                "(population observation, setting observation, preference for someone in that "
-                "group, empirical observation used as a strategy), no trait is attached and the "
-                "message is PASS — regardless of how casually the demographic is named.\n\n"
-                "Examples that PASS because ingredient 2 is missing (no trait attached):\n"
-                "  - 'a lot of men play basketball' — pure population observation, no strategy or "
-                "trait-prediction\n"
-                "  - 'my church has many singles' — setting observation\n"
-                "  - 'I want a male partner' — group-membership preference, no additional trait\n"
-                "  - 'I'd like to date someone Jewish' — group-membership preference\n"
-                "  - 'a male romantic partner who is black' — STACKED demographic descriptors "
-                "(gender + race), still no trait attached → PASS\n"
-                "  - 'an Asian woman in her 30s' — race + gender + age descriptors, all just "
-                "membership categories, no trait\n"
-                "  - 'a tall Jewish man' — height + religion + gender; height is a physical "
-                "descriptor not a personality trait, so this is still membership-only\n"
-                "  IMPORTANT: Stacking multiple demographic descriptors does NOT escalate the "
-                "tier. What matters is whether a TRAIT, BEHAVIOR, or EXPECTATION (personality, "
-                "values, conduct, capability, role) is attached — not how many demographic "
-                "categories the user names. A user can specify race + gender + age + religion + "
-                "body type and it stays PASS as long as no trait is attached.\n\n"
-                "Examples that PASS because ingredient 3 is missing (trait is universal/benign):\n"
-                "  - 'a shy Asian woman' — 'shy' is a universal individual trait, not "
-                "stereotype-distinctive\n"
-                "  - 'an ambitious Black woman' — 'ambitious' is universal\n"
-                "  - 'a quiet Latino man' — universal trait\n"
-                "  - 'a cute Korean girl' — 'cute' is universal\n\n"
-                "IMPORTANT — 'partner', 'romantic partner', 'spouse', 'friend', and similar "
-                "relationship-role words are NOT demographic groups. They are relationship types. "
-                "A trait attached to 'partner' alone (without explicit race, ethnicity, religion, "
-                "or gender) does NOT trigger ingredient 1. Examples that PASS:\n"
-                "  - 'I want a partner who is organized' — no demographic, universal trait\n"
-                "  - 'a romantic partner that likes to plan' — no demographic, universal trait\n"
-                "  - 'looking for someone kind and funny' — no demographic, universal traits\n"
-                "  - 'a partner who is ambitious and curious' — universal traits\n"
-                "  - 'I want a punctual romantic partner' — universal trait\n"
-                "Only escalate to CLARIFY/BLOCK when the user adds an explicit demographic "
-                "marker ('he', 'she', a race/ethnicity, a religion, a nationality) AND attaches "
-                "a stereotype-coded trait. Generic 'partner who [universal trait]' is always PASS.\n\n"
-                "CLARIFY — all three ingredients are arguably present but intent is genuinely "
-                "ambiguous between personal preference and group expectation:\n"
-                "  (i) Implicit role expectations stated as individual preference:\n"
-                "    - 'he should have a lot of money' — implicit gender + provider expectation\n"
-                "    - 'she should cook for me' — implicit gender + caretaker expectation\n"
-                "    - 'he should be tall and protective' — masculine-protector framing\n"
-                "    - 'easily find many men there' — group mention with subtle objectifying tone\n"
-                "    - 'Sarah, housewife' — generic-female name + traditional domestic role "
-                "(no racial layer); could be a mutual life arrangement or a stereotyped "
-                "expectation\n"
-                "    - 'Emily, stay-at-home wife' — same pattern\n"
-                "    - 'I want a housewife partner' — gender + domestic role, ambiguous intent\n"
-                "  (ii) STRATEGIC GROUP REASONING — the user's logic treats group membership as "
-                "predictive of a behavior, and uses that prediction as a personal strategy. Even "
-                "if each part is individually benign, the reasoning encodes a soft stereotype:\n"
-                "    - 'I play basketball because men play basketball, to find a male partner'\n"
-                "    - 'I go to bars because men hang out there'\n"
-                "    - 'I joined this hobby since most [group] do it' (using the group as a target)\n"
-                "  Distinguish from pure observation: 'a lot of men play basketball' (PASS) vs. "
-                "'I play basketball because men play basketball' (CLARIFY) — the second uses the "
-                "group's behavior as a predicate for the user's own choice.\n\n"
-                "BLOCK — all three ingredients clearly present, harm is unambiguous:\n"
-                "  (A) Generalizing language: 'all X are', 'X tend to be', 'typical X', "
-                "'compared to Y group', 'unlike Y', 'generally subservient', '[group] usually...' "
-                "where '...' is a trait, not a behavior like 'play basketball'.\n"
-                "  (B) Trait distinctly tied to a known harmful stereotype of the named group: "
-                "submissive+Asian woman, angry+Black woman, cheap+Jewish, lazy+[group], "
-                "bad-driver+Asian, aggressive+Black man, 'knows her place'+woman, etc.\n"
-                "  (C) RACIAL/ETHNIC ACTIVITY STEREOTYPES — pairing a racial or ethnic group "
-                "with a stereotyped activity, profession, or skill, even when stated casually. "
-                "These are documented stereotypes regardless of framing:\n"
-                "    - Black men + basketball / athletics\n"
-                "    - Asian + math / violin / engineering\n"
-                "    - Jewish + finance / money management\n"
-                "    - Mexican + landscaping / construction\n"
-                "    - Italian + mafia / cooking\n"
-                "    - Indian + tech support / convenience stores\n"
-                "    - Irish + drinking\n"
-                "  The pairing itself is the harm — these are BLOCK even without 'all' or "
-                "'typical' language. The same activity attached to gender alone (e.g. 'most men "
-                "play basketball') is CLARIFY at most, not BLOCK, because it lacks the racial "
-                "stereotype baggage.\n"
-                "  (D) ETHNIC NAME + TRADITIONAL DOMESTIC ROLE — when a culturally-coded female "
-                "name (Ying, Mei, Priya, Aisha, etc.) is paired with a traditional domestic "
-                "role (housewife, homemaker, stay-at-home wife, 'doesn't work', 'serves her "
-                "husband'), this activates the corresponding ethnic-housewife stereotype and is "
-                "BLOCK regardless of phrasing compression. The same role attached to a generic "
-                "'partner' or 'wife' (without an ethnic-coded name) is CLARIFY at most. "
-                "Examples that BLOCK: 'Ying, housewife', 'Mei, doesn't work', 'Priya, "
-                "stay-at-home wife', 'Aisha, traditional homemaker'.\n\n"
+                "nationality, sexual orientation, gender identity, disability, body type, "
+                "age, class). Implicit markers count equally:\n"
+                "     - Pronouns: 'he', 'she', 'him', 'her', 'his', 'hers'\n"
+                "     - Culturally-coded names (Ying, Mei, Wei, Hiroshi, Priya, Rajesh, "
+                "Aisha, Fatima, Jamal, Tyrone, Mohammed, Olga, Giovanni, etc.) are "
+                "demographic markers even without an explicit group word.\n"
+                "     - Disability/condition labels: 'blind', 'deaf', 'wheelchair user', "
+                "'autistic', 'mentally ill', etc.\n"
+                "     - Age descriptors used as a group proxy: 'older women', 'young men', "
+                "'millennials', 'boomers'.\n"
+                "  2. A TRAIT, BEHAVIOR, ROLE, or EXPECTATION is attached to that group.\n"
+                "  3. The attachment COULD reinforce discrimination — negative stereotyping, "
+                "fetishisation, role-enforcement, capability assumptions, or generalisation. "
+                "The harm does not need to be obvious or intentional; potential harm is "
+                "enough to flag.\n\n"
+                "AGGRESSIVE STANCE — ALL OF THESE ARE BLOCK:\n"
+                "  (A) Generalising language about a group: 'all X', 'X tend to', "
+                "'typical X', 'X usually', 'most X are', 'unlike Y group', "
+                "'compared to Y women/men', etc.\n"
+                "  (B) Any trait from a documented harmful stereotype paired with its "
+                "associated group — regardless of how the pairing is phrased or compressed:\n"
+                "     - submissive / obedient / docile / compliant + Asian or any woman\n"
+                "     - angry / aggressive / threatening + Black person\n"
+                "     - cheap / greedy / money-obsessed + Jewish person\n"
+                "     - lazy / unmotivated + any ethnic or racial group\n"
+                "     - criminal / violent + any racial group\n"
+                "     - bad driver + Asian person\n"
+                "     - terrorist / extremist + Muslim or Middle Eastern person\n"
+                "     - 'knows her place', 'stays home', 'doesn't work' + any woman\n"
+                "     - loud / dramatic / irrational + any woman\n"
+                "     - overly sexual / fetishised + any racial or ethnic group\n"
+                "  (C) Racial/ethnic activity or profession stereotypes — the pairing "
+                "itself is the harm, regardless of tone:\n"
+                "     - Black men + basketball / sports / athletics\n"
+                "     - Asian + math / violin / engineering / science\n"
+                "     - Jewish + finance / banking / money\n"
+                "     - Mexican / Latino + landscaping / cleaning / construction\n"
+                "     - Italian + mafia / organized crime / cooking\n"
+                "     - Indian + tech support / IT / convenience stores\n"
+                "     - Irish + alcohol / drinking\n"
+                "     - Any group + a profession that reduces them to a cultural cliché\n"
+                "  (D) Culturally-coded name + ANY traditional domestic role:\n"
+                "     - 'Ying, housewife' / 'Mei, stay-at-home wife' / 'Priya, homemaker'\n"
+                "     - These are BLOCK regardless of phrasing compression.\n"
+                "  (E) Fetishisation — expressing attraction to a group as a type or "
+                "commodity rather than as individuals:\n"
+                "     - 'I love Asian women' / 'I have a thing for Black men' / "
+                "'exotic women are so beautiful' / 'I prefer [group] because they are "
+                "[trait]' — using group membership as the reason for attraction.\n"
+                "  (F) Disability stereotypes — pairing a disability or condition with "
+                "capability assumptions, pity framing, or reductive role expectations:\n"
+                "     - 'deaf people are easier to control'\n"
+                "     - 'blind partner who needs me' (dependency framing)\n"
+                "     - 'someone mentally ill but manageable'\n"
+                "  (G) Nationality + character stereotype pairings:\n"
+                "     - 'French women are romantic' / 'Russian women are cold' / "
+                "'Latin men are passionate' — national origin used to predict personality.\n"
+                "  (H) STRATEGIC GROUP REASONING — treating group membership as predictive "
+                "of a behavior and using that prediction as a personal strategy:\n"
+                "     - 'I play basketball because men play basketball, to meet men'\n"
+                "     - 'I go to bars because men hang out there'\n"
+                "     - 'I joined this hobby since most [group] do it'\n"
+                "     Strategic reasoning is BLOCK, not CLARIFY — it encodes and reinforces "
+                "the stereotype even when stated as personal strategy.\n"
+                "  (I) Implicit role enforcement — stating a gendered expectation even "
+                "framed as personal preference:\n"
+                "     - 'she should cook for me' / 'he should be the provider'\n"
+                "     - 'she should be at home' / 'he should handle finances'\n"
+                "     - 'I want a housewife' / 'I want someone who doesn't work'\n"
+                "     These are BLOCK, not CLARIFY. Intent does not matter; the "
+                "expectation itself encodes harmful role enforcement.\n\n"
+                "CLARIFY — reserve this tier for genuine ambiguity only:\n"
+                "  A message where the demographic is present and a trait is attached, "
+                "but it is genuinely unclear whether the user means a harmful group "
+                "generalisation or a personal individual preference — AND the message "
+                "does not fit any BLOCK category above. This tier should be rare. "
+                "Examples:\n"
+                "  - 'he should be tall and protective' — masculine framing but could be "
+                "purely individual preference with no group claim.\n"
+                "  - 'she should be caring' — traditional but not unambiguously a "
+                "group-level enforcement claim.\n"
+                "  If there is any doubt between CLARIFY and BLOCK, choose BLOCK.\n\n"
+                "PASS — only when a message clearly does not meet ingredient 1, 2, or 3:\n"
+                "  - No demographic referenced at all.\n"
+                "  - Demographic referenced but no trait, behavior, or expectation "
+                "attached (pure membership preference: 'I want a Jewish partner').\n"
+                "  - Trait attached is unambiguously universal and benign for any "
+                "individual (shy, kind, curious, funny, ambitious, introverted) AND "
+                "there is no group-level framing.\n"
+                "  PASS should not be given whenever there is meaningful doubt. "
+                "If something feels borderline, escalate to CLARIFY.\n\n"
                 "DECISION ALGORITHM:\n"
-                "  Step 1: Is a demographic group referenced? If no → PASS.\n"
-                "  Step 2: Is a trait, behavior, or expectation attached to the group?\n"
-                "          If no (just mentioning, observing, or preferring membership) → PASS.\n"
-                "  Step 3: Is the attached trait harmful?\n"
-                "          - Universal trait (shy, kind, ambitious, etc.) → PASS.\n"
-                "          - Empirical/observational behavior (plays basketball, lives in cities) "
-                "→ PASS.\n"
-                "          - Could be either personal preference or group generalization → CLARIFY.\n"
-                "          - Clearly reinforces a documented harmful stereotype OR uses generalizing "
-                "language → BLOCK.\n\n"
+                "  Step 1: Is any demographic group referenced (explicit or implicit)? "
+                "If clearly no → PASS.\n"
+                "  Step 2: Is a trait, behavior, role, or expectation attached?\n"
+                "          If no → PASS.\n"
+                "  Step 3: Does the attachment fit any BLOCK category (A–I) above?\n"
+                "          If yes → BLOCK.\n"
+                "  Step 4: Is the attachment genuinely ambiguous between personal "
+                "preference and group generalisation?\n"
+                "          If yes → CLARIFY.\n"
+                "          If the attachment is benign and universal → PASS.\n\n"
                 "TIE-BREAKING:\n"
-                "  - When between PASS and CLARIFY → prefer PASS.\n"
-                "  - When between CLARIFY and BLOCK → prefer CLARIFY (give benefit of the doubt).\n\n"
+                "  - When between PASS and CLARIFY → choose CLARIFY.\n"
+                "  - When between CLARIFY and BLOCK → choose BLOCK.\n\n"
                 "Respond with ONLY valid JSON, no prose:\n"
-                '{"tier": "pass"|"clarify"|"block", "reason": "<one short sentence naming which '
-                'ingredient is or is not present>"}'
+                '{"tier": "pass"|"clarify"|"block", "reason": "<one short sentence '
+                'identifying which ingredient is present or absent, and which BLOCK '
+                'category if applicable>"}'
             ),
         },
         {"role": "user", "content": text},
     ]
     response = call_llm(messages, temperature=0.0, max_tokens=5000)
     if not response:
-        # Fail open — don't block users when the classifier errors.
-        return {"tier": "pass", "reason": ""}
+        # Fail closed — when the classifier errors, default to clarify rather
+        # than silently passing potentially harmful input through.
+        return {"tier": "clarify", "reason": "classifier unavailable — flagged for review"}
 
     try:
         start = response.find("{")
@@ -1483,6 +1447,276 @@ GENERIC_STEREOTYPE_CLARIFY = (
 )
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# GUARD LOGGER & ACCUMULATION SIGNAL
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Every flagged (clarify) or refused (block) request is written to
+# st.session_state.guard_logs as a structured entry.  Two accumulation
+# patterns are then monitored:
+#
+#   Pattern A — total flag accumulation:
+#       The total number of flagged entries in the session (regardless of
+#       which group was targeted) reaches SAME_GROUP_BLOCK_THRESHOLD.
+#       Per-group counting has been replaced with a flat total so that a
+#       user who spreads attempts across different demographics cannot
+#       stay under every individual group's threshold indefinitely.
+#
+#   Pattern B — prompt rewording:
+#       A flagged prompt (any tier, clarify or block) is reworded and
+#       retried REWORD_BLOCK_THRESHOLD or more times in the same session,
+#       detected via token-level Jaccard similarity >= REWORD_SIMILARITY_CUTOFF.
+#
+# When either threshold is crossed the session is locked for
+# BLOCK_DURATION_SECONDS.  Every chat input point in main() calls
+# check_block_gate() first and exits early while the lock is active.
+# ══════════════════════════════════════════════════════════════════════════
+
+# Thresholds
+SAME_GROUP_BLOCK_THRESHOLD: int = 3   # flags against the same demographic group
+REWORD_BLOCK_THRESHOLD:     int = 3   # similar rephrases of a blocked prompt
+REWORD_SIMILARITY_CUTOFF: float = 0.4 # Jaccard token overlap to count as a reword
+BLOCK_DURATION_SECONDS:     int = 300  # 5 minutes
+
+
+def _extract_demographic_from_text(text: str) -> str:
+    """Return the first demographic marker found in *text*, lower-cased.
+
+    Checks the pre-compiled regex first (single tokens), then the short
+    phrase list.  Returns ``"unknown"`` when nothing is found.
+    """
+    match = _DEMOGRAPHIC_MARKER_RE.search(text)
+    if match:
+        return match.group(0).lower()
+    lowered = text.lower()
+    for phrase in _DEMOGRAPHIC_MARKER_PHRASES:
+        if phrase in lowered:
+            return phrase
+    return "unknown"
+
+
+def _extract_stereotype_trait_from_text(text: str) -> str:
+    """Return the first explicit stereotype-coded word found in *text*.
+
+    Returns ``"unspecified"`` when the fast-path regex has no match (i.e.
+    the flag was raised by the LLM, not the deterministic gate).
+    """
+    match = _EXPLICIT_STEREOTYPE_RE.search(text)
+    if match:
+        return match.group(0).lower()
+    return "unspecified"
+
+
+def log_flagged_request(user_input: str, tier: str, reason: str) -> dict:
+    """Write one structured log entry for a flagged request.
+
+    Fields recorded:
+      ``timestamp``     — ISO-8601 wall-clock time
+      ``stage``         — current app stage (intro, about_you, …)
+      ``prompt``        — the raw user input that was flagged
+      ``tier``          — ``"clarify"`` or ``"block"``
+      ``group_targeted``— first demographic group identified in the prompt
+      ``trait_paired``  — stereotype-coded trait identified (if any)
+      ``reason``        — classifier reason string
+
+    The entry is appended to ``st.session_state.guard_logs`` and echoed
+    to stdout for server-side inspection.
+    """
+    if "guard_logs" not in st.session_state:
+        st.session_state.guard_logs = []
+
+    entry = {
+        "timestamp":      datetime.datetime.now().isoformat(timespec="seconds"),
+        "stage":          st.session_state.get("stage", "unknown"),
+        "prompt":         user_input,
+        "tier":           tier,
+        "group_targeted": _extract_demographic_from_text(user_input),
+        "trait_paired":   _extract_stereotype_trait_from_text(user_input),
+        "reason":         reason,
+    }
+    st.session_state.guard_logs.append(entry)
+    print(
+        f"[GUARD LOG] {tier.upper():7s} | "
+        f"group={entry['group_targeted']:20s} | "
+        f"trait={entry['trait_paired']:20s} | "
+        f"reason={entry['reason']}"
+    )
+    return entry
+
+
+# ── Accumulation helpers ──────────────────────────────────────────────────
+
+def _token_overlap(a: str, b: str) -> float:
+    """Jaccard similarity on whitespace-split token sets.
+
+    Used to detect prompt-rewording: two prompts that share >= 40 % of
+    their vocabulary are considered the same attempted request in disguise.
+    """
+    set_a = set(re.sub(r"[^\w\s]", "", a.lower()).split())
+    set_b = set(re.sub(r"[^\w\s]", "", b.lower()).split())
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
+
+def check_accumulation_patterns() -> tuple[bool, str]:
+    """Scan ``guard_logs`` for abuse patterns.
+
+    Returns ``(should_block: bool, escalation_reason: str)``.
+
+    **Pattern A — total flag accumulation**
+      Count every flagged entry in the session regardless of which
+      demographic group was involved or which tier it was assigned.
+      A malicious user who spreads attempts across different groups to
+      stay under a per-group threshold is caught here.  When the total
+      flag count reaches ``SAME_GROUP_BLOCK_THRESHOLD``, escalate.
+
+    **Pattern B — prompt rewording**
+      Among ALL flagged entries (both clarify- and block-tier), compare
+      every pair for token similarity >= ``REWORD_SIMILARITY_CUTOFF``.
+      If any anchor prompt clusters with ``REWORD_BLOCK_THRESHOLD`` or
+      more near-duplicates (including itself) the session is escalated.
+      Previously this only watched block-tier entries; including
+      clarify-tier entries catches probing behaviour where the user
+      deliberately phrases requests ambiguously to avoid outright refusal
+      while still iterating toward a blocked outcome.
+    """
+    logs = st.session_state.get("guard_logs", [])
+    if not logs:
+        return False, ""
+
+    # --- Pattern A: total flag count across ALL entries and ALL groups -----
+    # Per-group counting has been removed — it allowed a user to spread
+    # attempts across different demographics and stay under every individual
+    # group's threshold indefinitely. Total count closes that loophole.
+    total_flags = len(logs)
+    if total_flags >= SAME_GROUP_BLOCK_THRESHOLD:
+        groups_seen = sorted({
+            e.get("group_targeted", "unknown")
+            for e in logs
+            if e.get("group_targeted") and e.get("group_targeted") != "unknown"
+        })
+        group_summary = ", ".join(groups_seen) if groups_seen else "various"
+        reason = (
+            f"Your session has triggered {total_flags} content flags "
+            f"(groups involved: {group_summary})."
+        )
+        print(f"[GUARD] Pattern A triggered: {reason}")
+        return True, reason
+
+    # --- Pattern B: rewording across ALL flagged tiers ---------------------
+    # Extended from block-tier-only to all flagged entries so that probing
+    # via deliberately ambiguous (clarify-tier) rephrasings is also caught.
+    all_flagged = logs  # already only contains clarify + block entries
+    if len(all_flagged) >= 2:
+        for anchor in all_flagged:
+            cluster_size = sum(
+                1 for other in all_flagged
+                if _token_overlap(anchor["prompt"], other["prompt"]) >= REWORD_SIMILARITY_CUTOFF
+            )
+            if cluster_size >= REWORD_BLOCK_THRESHOLD:
+                reason = (
+                    f"A flagged prompt was reworded and resubmitted "
+                    f"{cluster_size} times in this session."
+                )
+                print(f"[GUARD] Pattern B triggered: {reason}")
+                return True, reason
+
+    return False, ""
+
+
+# ── Block state helpers ───────────────────────────────────────────────────
+
+def apply_temporary_block(reason: str) -> None:
+    """Lock the session for ``BLOCK_DURATION_SECONDS`` seconds.
+
+    Stores the expiry timestamp (ISO-8601) and the human-readable reason
+    in session state so ``is_user_blocked`` and ``render_block_wall`` can
+    read them on every rerun.
+    """
+    expiry = datetime.datetime.now() + datetime.timedelta(seconds=BLOCK_DURATION_SECONDS)
+    st.session_state.block_until  = expiry.isoformat(timespec="seconds")
+    st.session_state.block_reason = reason
+    print(f"[GUARD] 🔴 TEMPORARY BLOCK applied for {BLOCK_DURATION_SECONDS}s. Reason: {reason}")
+
+
+def is_user_blocked() -> tuple[bool, int]:
+    """Return ``(blocked: bool, seconds_remaining: int)``.
+
+    Clears the block state automatically once the wall-clock time has
+    passed so subsequent requests are allowed through without a manual
+    reset.
+    """
+    block_until_str = st.session_state.get("block_until")
+    if not block_until_str:
+        return False, 0
+    try:
+        block_until = datetime.datetime.fromisoformat(block_until_str)
+    except ValueError:
+        st.session_state.block_until  = None
+        st.session_state.block_reason = ""
+        return False, 0
+
+    remaining = int((block_until - datetime.datetime.now()).total_seconds())
+    if remaining > 0:
+        return True, remaining
+
+    # Block has expired — clean up
+    st.session_state.block_until  = None
+    st.session_state.block_reason = ""
+    return False, 0
+
+
+def render_block_wall() -> None:
+    """Render a full-width warning banner when the session is temporarily blocked.
+
+    Shows the escalation reason and a live countdown.  The caller should
+    follow this with ``st.stop()`` to prevent the rest of the UI from
+    rendering.
+    """
+    blocked, remaining = is_user_blocked()
+    if not blocked:
+        return
+
+    minutes, seconds = divmod(remaining, 60)
+    time_str = f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
+
+    st.error(
+        f"**Access temporarily paused.**\n\n"
+        f"{st.session_state.get('block_reason', '')}\n\n"
+        f"You can continue in **{time_str}**. This pause is lifted automatically.",
+        icon="🚫",
+    )
+    st.info(
+        "Our system detected a pattern of requests that pair demographic groups "
+        "with stereotype-coded traits. We build profiles around individual people "
+        "— their personality, values, and lifestyle — not group-level assumptions. "
+        "When you return you're welcome to continue the conversation using "
+        "individual descriptors.",
+        icon="ℹ️",
+    )
+
+
+def check_block_gate() -> bool:
+    """Return ``True`` and render the block wall when the session is locked.
+
+    Call this at the top of every chat-input handler in ``main()`` before
+    processing any user message.  Pattern::
+
+        if check_block_gate():
+            st.stop()
+    """
+    blocked, _ = is_user_blocked()
+    if blocked:
+        render_block_wall()
+    return blocked
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# END GUARD LOGGER
+# ══════════════════════════════════════════════════════════════════════════
+
+
 def run_stereotype_guard(
     user_input: str,
     refusal: str = GENERIC_STEREOTYPE_REFUSAL,
@@ -1493,17 +1727,25 @@ def run_stereotype_guard(
 
     Runs the 3-tier classifier on the user's message:
       - "pass":    return False; caller proceeds normally.
-      - "clarify": append `clarify_question` and return True.
-      - "block":   append `refusal` and return True.
+      - "clarify": log entry, append clarify_question, check patterns, return True.
+      - "block":   log entry, append refusal, check patterns (may escalate
+                   to temporary block), return True.
+
+    Additionally:
+      - If the session is already in a temporary block, returns True immediately.
+      - After every non-pass result, calls check_accumulation_patterns().
+        If a threshold is crossed, apply_temporary_block() is called and
+        the response is upgraded to an escalation notice.
 
     Caller should typically follow up with st.rerun() on True, plus any
     stage-specific state preservation (e.g. keeping awaiting_* flags set).
-
-    Pass stage-specific `refusal` and `clarify_question` strings for
-    tailored redirection; otherwise generic messages are used.
     """
+    # Gate 0: already blocked — bail immediately
+    if is_user_blocked()[0]:
+        return True
+
     # Carry forward an established demographic frame from relationship_type
-    # so multi-turn splits like "Asian female partner" → later "submissive"
+    # so multi-turn splits like "Asian female partner" later "submissive"
     # still hit the BLOCK fast-path. This is only used by the deterministic
     # BLOCK gate; it never upgrades to CLARIFY.
     established_demographic = (st.session_state.get("relationship_type") or "").strip()
@@ -1513,20 +1755,45 @@ def run_stereotype_guard(
             user_input,
             established_demographic=established_demographic,
         )
-    tier = guard.get("tier", "pass")
+    tier   = guard.get("tier",   "pass")
+    reason = guard.get("reason", "")
+
     if tier == "pass":
         return False
-    # Mark the just-appended user message as flagged so downstream LLM contexts
-    # (priority seeding, deal-breaker generation, profile generation) can filter
-    # it out. Caller is expected to have appended user_input to messages before
-    # invoking the guard.
+
+    # Mark the message as flagged in conversation history.
+    # Caller is expected to have appended user_input to messages before
+    # invoking the guard. Flagged messages are filtered out of LLM contexts
+    # (portrait extraction, priority seeding, profile generation).
     msgs = st.session_state.messages
     if (msgs
             and msgs[-1].get("role") == "user"
             and msgs[-1].get("content") == user_input):
         msgs[-1]["flagged"] = True
-    msg = clarify_question if tier == "clarify" else refusal
-    st.session_state.messages.append({"role": "assistant", "content": msg})
+
+    # Write structured log entry
+    log_flagged_request(user_input, tier=tier, reason=reason)
+
+    # Check accumulation patterns
+    should_block, escalation_reason = check_accumulation_patterns()
+    if should_block and not is_user_blocked()[0]:
+        apply_temporary_block(escalation_reason)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": (
+                "**Your access has been temporarily paused.**\n\n"
+                f"{escalation_reason}\n\n"
+                "This is an automated pause. You'll be able to continue in "
+                f"{BLOCK_DURATION_SECONDS // 60} minutes. "
+                "When you return, please rephrase any requests around individual "
+                "traits — personality, values, lifestyle — rather than group-level assumptions."
+            ),
+        })
+        return True
+
+    # Normal tier response (no escalation)
+    response_msg = clarify_question if tier == "clarify" else refusal
+    st.session_state.messages.append({"role": "assistant", "content": response_msg})
     return True
 
 
@@ -2084,6 +2351,13 @@ def init_session_state():
         st.session_state.profile_candidate_a = None
     if "profile_candidate_b" not in st.session_state:
         st.session_state.profile_candidate_b = None
+    # Guard logger & accumulation-signal state
+    if "guard_logs" not in st.session_state:
+        st.session_state.guard_logs = []
+    if "block_until" not in st.session_state:
+        st.session_state.block_until = None
+    if "block_reason" not in st.session_state:
+        st.session_state.block_reason = ""
 
 def advance_stage():
     current_idx = STAGES.index(st.session_state.stage)
@@ -3734,6 +4008,11 @@ def render_chat_content():
         render_scroll_to_profile_choice()
 
     # Chat input
+    # --- Block gate: if the session is temporarily locked, show the wall
+    # and stop rendering any further input handlers for this pass. ----------
+    if check_block_gate():
+        st.stop()
+
     if st.session_state.stage == "intro":
         if not st.session_state.messages:
             with st.chat_message("assistant"):
