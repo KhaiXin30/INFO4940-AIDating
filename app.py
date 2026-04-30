@@ -336,6 +336,37 @@ section entirely.
 """
 
 
+PARTNER_AUTONOMY_INSTRUCTIONS = """\
+USER TRAITS vs PARTNER TRAITS — DRAW A CLEAN LINE:
+
+The trait summary you receive describes the USER. The priorities describe what \
+the user wants in the partner. These are NOT the same input. Do not collapse \
+them.
+
+RULES:
+- The partner is an autonomous individual with their own complete personality, \
+interests, and agency. They are not a mirror, a foil, or an extension of the \
+user.
+- If a priority explicitly says the user wants a partner who shares a specific \
+trait (e.g. "wants an introvert like them"), give the partner that trait.
+- Otherwise, do NOT copy the user's self-described traits onto the partner. \
+Default to traits that COMPLEMENT what the user described. Examples:
+  - User "doesn't take the lead in groups" → partner is comfortable taking \
+initiative in group settings (unless priorities say otherwise).
+  - User is "highly analytical" → partner can be intuitive or emotionally \
+expressive — they don't have to also be analytical.
+  - User is "introverted and recharges alone" → partner can be either, but \
+default to someone who respects that rhythm rather than a literal copy.
+- Never translate the user's authority/control claims into the partner's \
+submissiveness or low energy. If the user says "I make all decisions" or "I \
+want them to listen and not disagree", the partner is NOT generated as someone \
+who defers, has no opinions, or has low energy — describe a healthy, agentic \
+person whose individual traits genuinely complement the user.
+- The partner has their own opinions, preferences, hobbies, and emotional \
+life that are not contingent on what the user wants from them.\
+"""
+
+
 class TrustRecoverySystem:
 
     def __init__(self):
@@ -853,7 +884,8 @@ PROFILE_SYSTEM_PROMPT = (
     "- When you include **Why This Person Fits You**, make it the **final** section and tie it to "
     "the user's personality and needs.\n\n"
     f"{TRUST_RECOVERY_INSTRUCTIONS}\n\n"
-    f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}"
+    f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}\n\n"
+    f"{PARTNER_AUTONOMY_INSTRUCTIONS}"
 )
 
 PROFILE_VARIANT_SYSTEM_PROMPT = (
@@ -885,7 +917,8 @@ PROFILE_VARIANT_SYSTEM_PROMPT = (
     "- Keep it grounded and specific — this should feel like a real, distinct person.\n"
     "- If the last section is **Why This Person Fits You**, show why *this* person specifically is a great match.\n\n"
     f"{TRUST_RECOVERY_INSTRUCTIONS}\n\n"
-    f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}"
+    f"{STEREOTYPE_GUARDRAIL_INSTRUCTIONS}\n\n"
+    f"{PARTNER_AUTONOMY_INSTRUCTIONS}"
 )
 
 REFINEMENT_SYSTEM_PROMPT = (
@@ -913,6 +946,8 @@ REFINEMENT_SYSTEM_PROMPT = (
     + TRUST_RECOVERY_INSTRUCTIONS
     + "\n\n"
     + STEREOTYPE_GUARDRAIL_INSTRUCTIONS
+    + "\n\n"
+    + PARTNER_AUTONOMY_INSTRUCTIONS
 )
 
 USER_PORTRAIT_EXTRACTION_PROMPT = (
