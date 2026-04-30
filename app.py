@@ -1168,7 +1168,8 @@ def classify_stereotype_input(
     Three deterministic fast-paths run before the LLM:
       - explicit stereotype word + (in-message OR established) demographic → BLOCK
       - no demographic + no stereotype word → PASS
-      - demographic-only descriptors, short, no markers → PASS
+      - demographic present but no trait-attachment marker and no stereotype
+        word and ≤20 words → PASS (pure membership input; ingredient 2 absent)
     """
     text = (user_input or "").strip()
     if not text:
@@ -1198,12 +1199,21 @@ def classify_stereotype_input(
     if not has_demo and not has_stereotype:
         return {"tier": "pass", "reason": "no demographic referenced"}
 
-    # NOTE: The previous short-circuit PASS for "demographic + short + no
-    # trait marker" has been removed. Any message that references a demographic
-    # group AND reaches this point is sent to the LLM for full evaluation.
-    # The only fast-paths that remain are the deterministic BLOCK above and the
-    # "no demographic AND no stereotype word" PASS above — everything else must
-    # earn a PASS from the LLM.
+    # Fast-path PASS: demographic referenced but no trait attached.
+    # If there is no trait-attachment marker AND no stereotype-coded word,
+    # the message is pure membership input — stacked demographics, age
+    # ranges, cultural names without a predicate ("Asian female romantic
+    # partner", "a Black man in his 30s", "Priya, late 20s").
+    # Ingredient 2 is absent by definition, so these pass immediately
+    # without LLM evaluation. The word-count ceiling is generous (20 words)
+    # to cover multi-descriptor phrases; the hard gates are the absence of
+    # a trait-attachment marker and the absence of a stereotype-coded word.
+    if (
+        not has_trait_marker
+        and not has_stereotype
+        and len(text.split()) <= 20
+    ):
+        return {"tier": "pass", "reason": "demographic referenced but no trait attached"}
 
     messages = [
         {
@@ -1295,20 +1305,29 @@ def classify_stereotype_input(
                 "  - 'she should be caring' — traditional but not unambiguously a "
                 "group-level enforcement claim.\n"
                 "  If there is any doubt between CLARIFY and BLOCK, choose BLOCK.\n\n"
-                "PASS — only when a message clearly does not meet ingredient 1, 2, or 3:\n"
+                "PASS — when a message clearly does not meet ingredient 1, 2, or 3:\n"
                 "  - No demographic referenced at all.\n"
-                "  - Demographic referenced but no trait, behavior, or expectation "
-                "attached (pure membership preference: 'I want a Jewish partner').\n"
-                "  - Trait attached is unambiguously universal and benign for any "
-                "individual (shy, kind, curious, funny, ambitious, introverted) AND "
-                "there is no group-level framing.\n"
-                "  PASS should not be given whenever there is meaningful doubt. "
-                "If something feels borderline, escalate to CLARIFY.\n\n"
+                "  - Demographic referenced but NO trait, behavior, role, or expectation "
+                "attached — pure membership preference. This is PASS regardless of how "
+                "many demographic categories are stacked:\n"
+                "     - 'I want a Jewish partner' — membership only\n"
+                "     - 'a male romantic partner who is Black' — stacked race + gender, "
+                "no trait → PASS\n"
+                "     - 'an Asian woman in her 30s' — race + gender + age, no trait → PASS\n"
+                "     - 'a tall Jewish man' — height is a physical descriptor, not a "
+                "personality trait or role → PASS\n"
+                "     - 'a disabled woman in her 40s' — membership descriptors only → PASS\n"
+                "  Stacking multiple demographic descriptors does NOT escalate the tier. "
+                "Only the attachment of a TRAIT, BEHAVIOR, ROLE, or EXPECTATION matters.\n"
+                "  - Trait is unambiguously universal and benign (shy, kind, curious, "
+                "funny, ambitious, introverted, organised, creative) AND there is no "
+                "group-level framing. Universal traits describe one person; they do not "
+                "define or diminish the group.\n\n"
                 "DECISION ALGORITHM:\n"
                 "  Step 1: Is any demographic group referenced (explicit or implicit)? "
                 "If clearly no → PASS.\n"
                 "  Step 2: Is a trait, behavior, role, or expectation attached?\n"
-                "          If no → PASS.\n"
+                "          If no (membership-only, stacked or not) → PASS.\n"
                 "  Step 3: Does the attachment fit any BLOCK category (A–I) above?\n"
                 "          If yes → BLOCK.\n"
                 "  Step 4: Is the attachment genuinely ambiguous between personal "
@@ -1316,7 +1335,9 @@ def classify_stereotype_input(
                 "          If yes → CLARIFY.\n"
                 "          If the attachment is benign and universal → PASS.\n\n"
                 "TIE-BREAKING:\n"
-                "  - When between PASS and CLARIFY → choose CLARIFY.\n"
+                "  - When between PASS and CLARIFY → prefer PASS. Demographic data "
+                "without a harmful trait attached is legitimate input and must not be "
+                "escalated on doubt alone.\n"
                 "  - When between CLARIFY and BLOCK → choose BLOCK.\n\n"
                 "Respond with ONLY valid JSON, no prose:\n"
                 '{"tier": "pass"|"clarify"|"block", "reason": "<one short sentence '
@@ -1661,9 +1682,12 @@ def is_user_blocked() -> tuple[bool, int]:
     if remaining > 0:
         return True, remaining
 
-    # Block has expired — clean up
+    # Block has expired — clean up block state and reset the flag log so
+    # the user gets a genuine fresh window rather than re-blocking
+    # immediately on their first new infraction.
     st.session_state.block_until  = None
     st.session_state.block_reason = ""
+    st.session_state.guard_logs   = []
     return False, 0
 
 
@@ -1695,6 +1719,11 @@ def render_block_wall() -> None:
         "individual descriptors.",
         icon="ℹ️",
     )
+    # Rerun every second so the countdown ticks in real time rather than
+    # freezing at the value captured when the user last interacted.
+    import time as _time
+    _time.sleep(10)
+    st.rerun()
 
 
 def check_block_gate() -> bool:
