@@ -4622,6 +4622,23 @@ def render_chat_content():
                         f"from the trait summary and priorities above; the demographic/physical descriptors "
                         f"here only describe how they look and what their background is."
                     )
+                else:
+                    partner_attributes_block = (
+                        "\n\nNO DEMOGRAPHIC ATTRIBUTES PROVIDED — keep the profile demographically neutral:\n"
+                        "- Choose a first name that does NOT strongly signal one ethnicity. Prefer broadly-readable "
+                        "names like Alex, Sam, Jordan, Riley, Taylor, Morgan, Casey, Avery, Quinn, Jamie, Reese, "
+                        "Cameron, Drew, Parker, Rowan, Sage, Skyler. Avoid names that read as a specific ethnic "
+                        "origin (e.g. Akira, Kaia, Mei, Hiroshi, Diego, Aaliyah, Priya, Dimitri, Soren).\n"
+                        "- Do NOT reference cultural background, heritage, ancestry, language, religion, "
+                        "country of origin, or ethnically-coded cuisine/holidays/traditions in the profile. "
+                        "No surnames, no 'grew up in [country]' framing, no heritage-coded hobbies.\n"
+                        "- Either OMIT the Physical Description section entirely, OR keep it to one short sentence "
+                        "of general impression (e.g. 'warm presence', 'easygoing energy'). Do NOT mention skin tone, "
+                        "hair texture, hair color, eye shape, eye color, or any feature that codes ethnicity.\n"
+                        "- Pick an age in the 25–35 range. Pick a gender that fits the relationship type.\n"
+                        "- The person should feel like a real, specific individual — just one whose ethnic "
+                        "background is left unspecified rather than implied through name or cultural detail."
+                    )
 
                 messages.append({
                     "role": "user",
@@ -4693,6 +4710,21 @@ def render_chat_content():
                                 "The same core trait requirements must be met, but through a completely different human.\n\n"
                                 "Invent a new opening line: **Meet [DifferentFirstName], a [DifferentAge] year old [SameGender].**\n\n"
                             )
+                            if not st.session_state.get("partner_attributes"):
+                                variant_instruction += (
+                                    "NO DEMOGRAPHIC ATTRIBUTES PROVIDED — keep Profile B demographically neutral:\n"
+                                    "- The new name must NOT strongly signal one ethnicity. Prefer broadly-readable "
+                                    "names like Alex, Sam, Jordan, Riley, Taylor, Morgan, Casey, Avery, Quinn, Jamie, "
+                                    "Reese, Cameron, Drew, Parker, Rowan, Sage, Skyler. Avoid names that read as a "
+                                    "specific ethnic origin.\n"
+                                    "- Do NOT reference cultural background, heritage, ancestry, language, religion, "
+                                    "country of origin, or ethnically-coded cuisine/holidays/traditions.\n"
+                                    "- Either OMIT the Physical Description section, OR keep it to one short sentence "
+                                    "of general impression. Do NOT mention skin tone, hair texture, hair color, eye "
+                                    "shape, eye color, or any feature that codes ethnicity.\n"
+                                    "- Different life context is encouraged (career, hobbies, daily rhythm), but "
+                                    "express it through neutral details rather than ethnic or cultural markers.\n\n"
+                                )
                         section_order = _extract_profile_section_headers(profile_a)
                         if len(section_order) < 5:
                             section_order = list(DEFAULT_PROFILE_SECTION_FALLBACK_ORDERED)
