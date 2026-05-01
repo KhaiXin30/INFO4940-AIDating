@@ -4695,23 +4695,47 @@ def render_chat_content():
                                 "so the two profiles feel like two different facets of the same person rather than two different people.\n\n"
                             )
                         else:
-                            # Surprise mode — Profile B is a genuinely different person, but same gender as Profile A.
-                            # Extract gender from Profile A's Meet line (e.g. "a 31 year old man" → "man")
+                            # Surprise mode — Profile B is a different person, but locks in any
+                            # demographic attributes the user explicitly specified.
+                            has_partner_attrs = bool(st.session_state.get("partner_attributes"))
                             gender_hint = ""
                             if meet_line_a:
                                 gender_hint = (
                                     f"Profile A's opening line is: {meet_line_a}\n"
                                     "Profile B must use the **same gender** as Profile A (extract it from the line above). "
                                 )
-                            variant_instruction = (
-                                f"{gender_hint}"
-                                "Profile B must be a DIFFERENT person — different name, different age, "
-                                "different life context (career world, hobbies, upbringing, daily rhythm). "
-                                "The same core trait requirements must be met, but through a completely different human.\n\n"
-                                "Invent a new opening line: **Meet [DifferentFirstName], a [DifferentAge] year old [SameGender].**\n\n"
-                            )
-                            if not st.session_state.get("partner_attributes"):
-                                variant_instruction += (
+                            if has_partner_attrs:
+                                # User specified age/gender/ethnicity/physical traits — Profile B must
+                                # honour all of them exactly as Profile A did. Only vary career,
+                                # hobbies, personality texture, and backstory.
+                                variant_instruction = (
+                                    f"{gender_hint}"
+                                    "Profile B must be a DIFFERENT person from Profile A, but ALL user-specified "
+                                    "demographic and physical attributes (in PARTNER DEMOGRAPHIC & PHYSICAL ATTRIBUTES "
+                                    "above) must match Profile A exactly. Specifically:\n"
+                                    "- **Same age** as Profile A (copy the age from Profile A's opening line — do not change it).\n"
+                                    "- **Same gender** as Profile A.\n"
+                                    "- **Same ethnicity / cultural background** as Profile A (whatever the user specified).\n"
+                                    "- **Same physical traits** as Profile A (height, build, hair, eye color, etc. — "
+                                    "whatever the user specified). Do not invent new physical details.\n\n"
+                                    "What MUST differ between Profile A and Profile B:\n"
+                                    "- Different first name (still consistent with the user's specified ethnicity if any).\n"
+                                    "- Different career / work world.\n"
+                                    "- Different hobbies and daily rhythm.\n"
+                                    "- Different personality texture and emotional expression style "
+                                    "(while still meeting the same core trait requirements).\n"
+                                    "- Different backstory.\n\n"
+                                    "Opening line: **Meet [DifferentFirstName], a [SameAgeAsProfileA] year old [SameGender].**\n\n"
+                                )
+                            else:
+                                # No partner attributes — Profile B is a genuinely different person
+                                # (different age too) and stays demographically neutral.
+                                variant_instruction = (
+                                    f"{gender_hint}"
+                                    "Profile B must be a DIFFERENT person — different name, different age, "
+                                    "different life context (career world, hobbies, upbringing, daily rhythm). "
+                                    "The same core trait requirements must be met, but through a completely different human.\n\n"
+                                    "Invent a new opening line: **Meet [DifferentFirstName], a [DifferentAge] year old [SameGender].**\n\n"
                                     "NO DEMOGRAPHIC ATTRIBUTES PROVIDED — keep Profile B demographically neutral:\n"
                                     "- The new name must NOT strongly signal one ethnicity. Prefer broadly-readable "
                                     "names like Alex, Sam, Jordan, Riley, Taylor, Morgan, Casey, Avery, Quinn, Jamie, "
