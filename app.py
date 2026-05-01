@@ -1005,7 +1005,7 @@ def load_llm():
     from llama_cpp import Llama
     return Llama(
         model_path=MODEL_PATH,
-        n_ctx=4096,
+        n_ctx=8192,
         n_gpu_layers=-1,
         verbose=False
     )
@@ -1593,7 +1593,7 @@ def generate_profile_with_retry(
     and on a flag appends a corrective instruction (citing the flag's
     reason) before retrying. Up to ``max_attempts`` total attempts.
 
-    Token-budget note: the local model is loaded with ``n_ctx=4096``, so
+    Token-budget note: the local model is loaded with ``n_ctx=8192``, so
     the retry must NOT include the previous flagged profile in the
     context — that would push attempt 2 past the ceiling. Instead, on
     each retry we replace any previously-appended corrective message
@@ -4115,6 +4115,7 @@ def render_deal_breaker_ranking():
         attrs_question = (
             "Before I build the profile, are there any demographic or physical attributes "
             "you'd like me to include?\n\n"
+            "- **Age** (e.g. 25, late 20s, 30s)\n"
             "- **Gender** (e.g. male, female, non-binary)\n"
             "- **Ethnicity or background** (e.g. Asian, Black, Latino, Middle Eastern, white, mixed)\n"
             "- **Physical traits** (height, body build, hair, eye color, etc.)\n\n"
